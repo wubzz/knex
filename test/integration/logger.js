@@ -86,20 +86,20 @@ module.exports = function(knex) {
     }
   }
 
-  var originalRaw = client.raw
-  var originalQueryBuilder = client.queryBuilder
-  var originalSchemaBuilder = client.schemaBuilder
-  client.raw = function() {
+  var originalRaw = knex.raw
+  var originalQueryBuilder = knex.queryBuilder
+  var originalSchemaBuilder = knex.schemaBuilder
+  knex.raw = function() {
     var raw = originalRaw.apply(this, arguments)
     raw.testSql = makeTestSQL(raw)
     return raw
   }
-  client.queryBuilder = function() {
+  knex.queryBuilder = function() {
     var qb = originalQueryBuilder.apply(this, arguments)
     qb.testSql = makeTestSQL(qb)
     return qb
   }
-  client.schemaBuilder = function() {
+  knex.schemaBuilder = function() {
     var sb = originalSchemaBuilder.apply(this, arguments)
     sb.testSql = makeTestSQL(sb)
     return sb

@@ -6,7 +6,8 @@ var tableSql;
 
 var sinon = require('sinon');
 var PG_Client = require('../../../lib/dialects/postgres');
-var client    = new PG_Client({});
+var KnexContext = require('../../../lib/classes/KnexContext')
+var client    = new KnexContext(new PG_Client({}));
 var knex = require('../../../knex');
 
 var equal  = require('assert').equal;
@@ -707,8 +708,8 @@ describe("PostgreSQL SchemaBuilder", function() {
 
     before(function () {
       spy = sinon.spy();
-      originalWrapIdentifier = client.config.wrapIdentifier;
-      client.config.wrapIdentifier = function (value, wrap, queryContext) {
+      originalWrapIdentifier = client.client.config.wrapIdentifier;
+      client.client.config.wrapIdentifier = function (value, wrap, queryContext) {
         spy(value, queryContext);
         return wrap(value);
       };
@@ -719,7 +720,7 @@ describe("PostgreSQL SchemaBuilder", function() {
     });
 
     after(function () {
-      client.config.wrapIdentifier = originalWrapIdentifier;
+      client.client.config.wrapIdentifier = originalWrapIdentifier;
     });
 
     it('SchemaCompiler passes queryContext to wrapIdentifier via TableCompiler', function () {

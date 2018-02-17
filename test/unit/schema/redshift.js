@@ -5,7 +5,8 @@
 var tableSql;
 
 const Redshift_Client = require('../../../lib/dialects/redshift');
-const client          = new Redshift_Client({})
+var KnexContext = require('../../../lib/classes/KnexContext');
+const client          = new KnexContext(new Redshift_Client({}))
 
 const equal  = require('assert').equal;
 

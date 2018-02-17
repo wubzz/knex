@@ -4,7 +4,8 @@
 
 var sinon = require('sinon');
 var Oracle_Client = require('../../../lib/dialects/oracledb');
-var client        = new Oracle_Client({})
+var KnexContext = require('../../../lib/classes/KnexContext');
+var client        = new KnexContext(new Oracle_Client({}))
 
 describe("OracleDb SchemaBuilder", function() {
 
@@ -576,8 +577,8 @@ describe("OracleDb SchemaBuilder", function() {
 
     before(function () {
       spy = sinon.spy();
-      originalWrapIdentifier = client.config.wrapIdentifier;
-      client.config.wrapIdentifier = function (value, wrap, queryContext) {
+      originalWrapIdentifier = client.client.config.wrapIdentifier;
+      client.client.config.wrapIdentifier = function (value, wrap, queryContext) {
         spy(value, queryContext);
         return wrap(value);
       };
@@ -588,7 +589,7 @@ describe("OracleDb SchemaBuilder", function() {
     });
 
     after(function () {
-      client.config.wrapIdentifier = originalWrapIdentifier;
+      client.client.config.wrapIdentifier = originalWrapIdentifier;
     });
 
     it('SchemaCompiler passes queryContext to wrapIdentifier via TableCompiler', function () {

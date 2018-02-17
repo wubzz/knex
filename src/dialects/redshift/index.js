@@ -5,7 +5,6 @@ import inherits from 'inherits';
 import Client_PG from '../postgres';
 import { assign, map, } from 'lodash'
 
-import Transaction from './transaction';
 import QueryCompiler from './query/compiler';
 import ColumnBuilder from './schema/columnbuilder';
 import ColumnCompiler from './schema/columncompiler';
@@ -18,9 +17,6 @@ function Client_Redshift(config) {
 inherits(Client_Redshift, Client_PG)
 
 assign(Client_Redshift.prototype, {
-  transaction() {
-    return new Transaction(this, ...arguments)
-  },
 
   queryCompiler() {
     return new QueryCompiler(this, ...arguments)

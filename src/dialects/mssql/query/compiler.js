@@ -117,7 +117,7 @@ assign(QueryCompiler_MSSQL.prototype, {
     let distinct = false;
     if (this.onlyUnions()) return ''
     const top = this.top();
-    const columns = this.grouped.columns || []
+    const columns = this.statements.columns || []
     let i = -1, sql = [];
     if (columns) {
       while (++i < columns.length) {

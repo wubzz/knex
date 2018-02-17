@@ -21,6 +21,12 @@ function ColumnCompiler(client, tableCompiler, columnBuilder) {
   this.modifiers = [];
 }
 
+Object.defineProperty(ColumnCompiler.prototype, 'log', {
+  get() {
+    return this.client.log
+  }
+})
+
 ColumnCompiler.prototype.pushQuery = helpers.pushQuery
 
 ColumnCompiler.prototype.pushAdditional = helpers.pushAdditional

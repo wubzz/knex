@@ -42,7 +42,7 @@ assign(ColumnCompiler_PG.prototype, {
   floating: 'real',
   increments: 'serial primary key',
   json(jsonb) {
-    if (jsonb) helpers.deprecate('json(true)', 'jsonb()')
+    if (jsonb) this.log.warn(helpers.deprecate('json(true)', 'jsonb()'))
     return jsonColumn(this.client, jsonb);
   },
   jsonb() {

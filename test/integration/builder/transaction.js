@@ -320,7 +320,7 @@ module.exports = function(knex) {
           expect(error.bindings).to.be.an('array');
           expect(error.bindings[0]).to.equal('Test');
           expect(error.sql).to.equal('select * FROM accounts WHERE username = ?');
-          expect(error.message).to.equal('Knex: Timeout acquiring a connection. The pool is probably full. Are you missing a .transacting(trx) call?');
+          expect(error.message).to.contain('Knex: Timeout acquiring a connection. The pool is probably full. Are you missing a .transacting(trx) call?');
           trx.commit();//Test done
         });
       });
@@ -336,11 +336,16 @@ module.exports = function(knex) {
 
       const db = new Knex(knexConfig);
 
-      return db.transaction(function() {
-        return db.transaction(function() {})
+      return db.transaction(function(trx1) {
+        return trx1.raw('SELECT 1')
+          .then(function() {
+            return db.transaction(function(trx2) {
+              return trx2.raw('SELECT 2');
+            })
+          })
       }).then(function () {
         throw new Error('should not get here')
-      }).catch(Promise.TimeoutError, function(error) {})
+      }).catch(function(error) {})
     });
 
     /**
@@ -411,7 +416,8 @@ module.exports = function(knex) {
 
     it('Rollback without an error should not reject with undefined #1966', function() {
       return knex.transaction(function(tr) {
-        tr.rollback();
+        return tr.raw('SELECT 1')
+          .then(() => tr.rollback());
       })
       .then(function() {
         expect(true).to.equal(false, 'Transaction should not have commited');

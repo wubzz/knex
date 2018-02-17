@@ -97,7 +97,7 @@ assign(ColumnCompiler_MySQL.prototype, {
 
   comment(comment) {
     if (comment && comment.length > 255) {
-      helpers.warn('Your comment is longer than the max comment length for MySQL')
+      this.log.warn('Your comment is longer than the max comment length for MySQL')
     }
     return comment && `comment '${comment}'`
   },

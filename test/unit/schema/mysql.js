@@ -7,15 +7,17 @@ var MySQL_Client  = require('../../../lib/dialects/mysql');
 var Maria_Client  = require('../../../lib/dialects/maria');
 var MySQL2_Client = require('../../../lib/dialects/mysql2');
 
+var KnexContext = require('../../../lib/classes/KnexContext')
+
 module.exports = function(dialect) {
 
 describe(dialect + " SchemaBuilder", function() {
 
   var client;
   switch(dialect) {
-    case 'mysql': client = new MySQL_Client(); break;
-    case 'mysql2': client = new MySQL2_Client(); break;
-    case 'maria': client = new Maria_Client(); break;
+    case 'mysql': client = new KnexContext(new MySQL_Client()); break;
+    case 'mysql2': client = new KnexContext(new MySQL2_Client()); break;
+    case 'maria': client = new KnexContext(new Maria_Client()); break;
   }
 
   var tableSql;
@@ -25,7 +27,9 @@ describe(dialect + " SchemaBuilder", function() {
     tableSql = client.schemaBuilder().createTable('users', function (table) {
       table.increments('id');
       table.string('email').collate('utf8_unicode_ci');
-    }).toSQL();
+    });
+
+    tableSql = tableSql.toSQL();
 
     equal(1, tableSql.length);
     expect(tableSql[0].sql).to.equal('create table `users` (`id` int unsigned not null auto_increment primary key, `email` varchar(255) collate \'utf8_unicode_ci\')');
@@ -614,8 +618,8 @@ describe(dialect + " SchemaBuilder", function() {
 
     before(function () {
       spy = sinon.spy();
-      originalWrapIdentifier = client.config.wrapIdentifier;
-      client.config.wrapIdentifier = function (value, wrap, queryContext) {
+      originalWrapIdentifier = client.client.config.wrapIdentifier;
+      client.client.config.wrapIdentifier = function (value, wrap, queryContext) {
         spy(value, queryContext);
         return wrap(value);
       };
@@ -626,7 +630,7 @@ describe(dialect + " SchemaBuilder", function() {
     });
 
     after(function () {
-      client.config.wrapIdentifier = originalWrapIdentifier;
+      client.client.config.wrapIdentifier = originalWrapIdentifier;
     });
 
     it('SchemaCompiler passes queryContext to wrapIdentifier via TableCompiler', function () {

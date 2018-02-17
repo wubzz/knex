@@ -18,7 +18,7 @@ import SQLite3_DDL from './schema/ddl';
 function Client_SQLite3(config) {
   Client.call(this, config)
   if (isUndefined(config.useNullAsDefault)) {
-    helpers.warn(
+    this.log.warn(
       'sqlite does not support inserting default values. Set the ' +
       '`useNullAsDefault` flag to hide this warning. ' +
       '(see docs http://knexjs.org/#Builder-insert).'
@@ -53,8 +53,8 @@ assign(Client_SQLite3.prototype, {
     return new TableCompiler(this, ...arguments)
   },
 
-  ddl(compiler, pragma, connection) {
-    return new SQLite3_DDL(this, compiler, pragma, connection)
+  ddl(context, compiler, pragma) {
+    return new SQLite3_DDL(context, compiler, pragma)
   },
 
   wrapIdentifierImpl(value) {
@@ -81,7 +81,7 @@ assign(Client_SQLite3.prototype, {
 
   // Runs the query on the specified connection, providing the bindings and any
   // other necessary prep work.
-  _query(connection, obj) {
+  _query(context, connection, obj) {
     const { method } = obj;
     let callMethod;
     switch (method) {
@@ -110,7 +110,7 @@ assign(Client_SQLite3.prototype, {
     })
   },
 
-  _stream(connection, sql, stream) {
+  _stream(context, connection, sql, stream) {
     const client = this;
     return new Promise(function(resolver, rejecter) {
       stream.on('error', rejecter)

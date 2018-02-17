@@ -7,7 +7,6 @@ import Client from '../../client';
 import Promise from 'bluebird';
 import * as helpers from '../../helpers';
 
-import Transaction from './transaction';
 import QueryCompiler from './query/compiler';
 import SchemaCompiler from './schema/compiler';
 import TableCompiler from './schema/tablecompiler';
@@ -48,10 +47,6 @@ assign(Client_MySQL.prototype, {
 
   columnCompiler() {
     return new ColumnCompiler(this, ...arguments)
-  },
-
-  transaction() {
-    return new Transaction(this, ...arguments)
   },
 
   _escapeBinding: makeEscape(),
@@ -99,7 +94,7 @@ assign(Client_MySQL.prototype, {
 
   // Grab a connection, run the query via the MySQL streaming interface,
   // and pass that through to the stream we've sent back to the client.
-  _stream(connection, obj, stream, options) {
+  _stream(context, connection, obj, stream, options) {
     options = options || {}
     const queryOptions = assign({sql: obj.sql}, obj.options)
     return new Promise((resolver, rejecter) => {
@@ -111,7 +106,7 @@ assign(Client_MySQL.prototype, {
 
   // Runs the query on the specified connection, providing the bindings
   // and any other necessary prep work.
-  _query(connection, obj) {
+  _query(context, connection, obj) {
     if (!obj || typeof obj === 'string') obj = {sql: obj}
     return new Promise(function(resolver, rejecter) {
       if (!obj.sql) {
@@ -120,7 +115,15 @@ assign(Client_MySQL.prototype, {
       }
       const queryOptions = assign({sql: obj.sql}, obj.options)
       connection.query(queryOptions, obj.bindings, function(err, rows, fields) {
-        if (err) return rejecter(err)
+        if (err) {
+          if(this._isTransactionError(err)) {
+            this.log.warn(
+              `Transaction was implicitly committed, do not mix transactions and ` +
+              `DDL with ${this.driverName} (#805)`
+            );
+          }
+          return rejecter(err)
+        }
         obj.response = [rows, fields]
         resolver(obj)
       })
@@ -156,28 +159,44 @@ assign(Client_MySQL.prototype, {
 
   canCancelQuery: true,
 
-  cancelQuery(connectionToKill) {
+  cancelQuery(context) {
     const acquiringConn = this.acquireConnection()
 
     // Error out if we can't acquire connection in time.
     // Purposely not putting timeout on `KILL QUERY` execution because erroring
     // early there would release the `connectionToKill` back to the pool with
     // a `KILL QUERY` command yet to finish.
-    return acquiringConn
+    return Promise.all([
+      acquiringConn,
+      context.getConnection()
+    ])
       .timeout(100)
-      .then((conn) => this.query(conn, {
-        method: 'raw',
-        sql: 'KILL QUERY ?',
-        bindings: [connectionToKill.threadId],
-        options: {},
-      }))
-      .finally(() => {
+      .then(([connection, connectionToKill]) => {
+        connectionToKill.__knex__disposed = new Error('Connection Destroyed By Timeout')
+
+        return this.query(conn, {
+          method: 'raw',
+          sql: 'KILL QUERY ?',
+          bindings: [connectionToKill.threadId],
+          options: {},
+        })
+          .then((resp) => {
+            this.releaseConnection(connection);
+          })
+      })
+      .catch(Promise.TimeoutError, (error) => {
         // NOT returning this promise because we want to release the connection
         // in a non-blocking fashion
         acquiringConn
           .then((conn) => this.releaseConnection(conn));
+
+        throw error;
       });
-  }
+  },
+
+  _isTransactionError(err) {
+    return err.errno === 1305
+  },
 
 })
 

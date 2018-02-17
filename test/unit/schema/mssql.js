@@ -4,7 +4,8 @@
 
 var sinon = require('sinon');
 var MSSQL_Client  = require('../../../lib/dialects/mssql');
-var client = new MSSQL_Client();
+var KnexContext = require('../../../lib/classes/KnexContext');
+var client = new KnexContext(new MSSQL_Client());
 
 describe("MSSQL SchemaBuilder", function() {
 
@@ -562,8 +563,8 @@ describe("MSSQL SchemaBuilder", function() {
 
     before(function () {
       spy = sinon.spy();
-      originalWrapIdentifier = client.config.wrapIdentifier;
-      client.config.wrapIdentifier = function (value, wrap, queryContext) {
+      originalWrapIdentifier = client.client.config.wrapIdentifier;
+      client.client.config.wrapIdentifier = function (value, wrap, queryContext) {
         spy(value, queryContext);
         return wrap(value);
       };
@@ -574,7 +575,7 @@ describe("MSSQL SchemaBuilder", function() {
     });
 
     after(function () {
-      client.config.wrapIdentifier = originalWrapIdentifier;
+      client.client.config.wrapIdentifier = originalWrapIdentifier;
     });
 
     it('SchemaCompiler passes queryContext to wrapIdentifier via TableCompiler', function () {

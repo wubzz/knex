@@ -5,7 +5,6 @@ import inherits from 'inherits';
 import Client_MySQL from '../mysql';
 import Promise from 'bluebird';
 import * as helpers from '../../helpers';
-import Transaction from './transaction';
 
 import { assign, map } from 'lodash'
 
@@ -19,10 +18,6 @@ assign(Client_MariaSQL.prototype, {
   dialect: 'mariadb',
 
   driverName: 'mariasql',
-
-  transaction() {
-    return new Transaction(this, ...arguments)
-  },
 
   _driver() {
     return require('mariasql')

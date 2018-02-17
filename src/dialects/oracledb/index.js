@@ -10,7 +10,6 @@ const ReturningHelper = require('./utils').ReturningHelper;
 const Promise = require('bluebird');
 const stream = require('stream');
 const helpers = require('../../helpers');
-const Transaction = require('./transaction');
 const Client_Oracle = require('../oracle');
 const Oracle_Formatter = require('../oracle/formatter');
 const Buffer = require('safe-buffer').Buffer;
@@ -54,9 +53,6 @@ Client_Oracledb.prototype.columnCompiler = function() {
 }
 Client_Oracledb.prototype.formatter = function() {
   return new Oracledb_Formatter(this, ...arguments)
-}
-Client_Oracledb.prototype.transaction = function() {
-  return new Transaction(this, ...arguments)
 }
 
 Client_Oracledb.prototype.prepBindings = function(bindings) {

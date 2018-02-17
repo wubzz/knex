@@ -139,7 +139,7 @@ assign(QueryCompiler_Oracle.prototype, {
   forShare() {
     // lock for share is not directly supported by oracle
     // use LOCK TABLE .. IN SHARE MODE; instead
-    helpers.warn('lock for share is not supported by oracle dialect');
+    this.log.warn('lock for share is not supported by oracle dialect');
     return '';
   },
 

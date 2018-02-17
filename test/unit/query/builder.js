@@ -10,35 +10,55 @@ var Oracledb_Client = require('../../../lib/dialects/oracledb')
 var SQLite3_Client = require('../../../lib/dialects/sqlite3')
 var MSSQL_Client = require('../../../lib/dialects/mssql')
 
-var clients = {
-  mysql: new MySQL_Client({}),
-  postgres: new PG_Client({}),
-  redshift: new Redshift_Client({}),
-  oracle: new Oracle_Client({}),
-  oracledb: new Oracledb_Client({}),
-  sqlite3: new SQLite3_Client({}),
-  mssql: new MSSQL_Client({}),
+var KnexContext = require('../../../lib/classes/KnexContext')
+
+var contexts = {
+  mysql: new KnexContext(new MySQL_Client({})),
+  postgres: new KnexContext(new PG_Client({})),
+  oracle: new KnexContext(new Oracle_Client({})),
+  oracledb: new KnexContext(new Oracledb_Client({})),
+  sqlite3: new KnexContext(new SQLite3_Client({})),
+  mssql: new KnexContext(new MSSQL_Client({})),
+  redshift: new KnexContext(new Redshift_Client({})),
 }
 
 var useNullAsDefaultConfig = { useNullAsDefault: true };
-var clientsWithNullAsDefault = {
-  mysql: new MySQL_Client(useNullAsDefaultConfig),
-  postgres: new PG_Client(useNullAsDefaultConfig),
-  redshift: new Redshift_Client(useNullAsDefaultConfig),
-  oracle: new Oracle_Client(useNullAsDefaultConfig),
-  oracledb: new Oracledb_Client(useNullAsDefaultConfig),
-  sqlite3: new SQLite3_Client(useNullAsDefaultConfig),
-  mssql: new MSSQL_Client(useNullAsDefaultConfig),
+var contextsWithNullAsDefault = {
+  mysql: new KnexContext(new MySQL_Client(useNullAsDefaultConfig)),
+  postgres: new KnexContext(new PG_Client(useNullAsDefaultConfig)),
+  oracle: new KnexContext(new Oracle_Client(useNullAsDefaultConfig)),
+  oracledb: new KnexContext(new Oracledb_Client(useNullAsDefaultConfig)),
+  sqlite3: new KnexContext(new SQLite3_Client(useNullAsDefaultConfig)),
+  mssql: new KnexContext(new MSSQL_Client(useNullAsDefaultConfig)),
+  redshift: new KnexContext(new Redshift_Client(useNullAsDefaultConfig)),
 }
 
-// note: as a workaround, we are using postgres here, since that's using the default " field wrapping
-// otherwise subquery cloning would need to be fixed. See: https://github.com/tgriesser/knex/pull/2063
+var customWrapperConfig = {
+  wrapIdentifier: (value, clientImpl, context) => {
+    var suffix = '_wrapper_was_here';
+    if (context && context.fancy) {
+      suffix = '_fancy_wrapper_was_here';
+    }
+    return clientImpl(value + suffix);
+  }
+};
+
+var contextsWithCustomIdentifierWrapper = {
+  mysql: new KnexContext(new MySQL_Client(customWrapperConfig)),
+  postgres: new KnexContext(new PG_Client(customWrapperConfig)),
+  redshift: new KnexContext(new Redshift_Client(customWrapperConfig)),
+  oracle: new KnexContext(new Oracle_Client(customWrapperConfig)),
+  oracledb: new KnexContext(new Oracledb_Client(customWrapperConfig)),
+  sqlite3: new KnexContext(new SQLite3_Client(customWrapperConfig)),
+  mssql: new KnexContext(new MSSQL_Client(customWrapperConfig)),
+};
+
 function qb() {
-  return clients.postgres.queryBuilder()
+  return contexts.postgres.queryBuilder();
 }
 
 function raw(sql, bindings) {
-  return clients.postgres.raw(sql, bindings);
+  return contexts.postgres.raw(sql, bindings);
 }
 
 function verifySqlResult(dialect, expectedObj, sqlObj) {
@@ -56,67 +76,71 @@ function verifySqlResult(dialect, expectedObj, sqlObj) {
   });
 }
 
-function testsql(chain, valuesToCheck, selectedClients) {
-  selectedClients = selectedClients || clients;
-  Object.keys(valuesToCheck).forEach(function(key) {
-    var newChain = chain.clone()
-        newChain.client = selectedClients[key]
-    var sqlAndBindings = newChain.toSQL()
-
-    var checkValue = valuesToCheck[key]
-    if (typeof checkValue === 'string') {
-      verifySqlResult(key, {sql: checkValue}, sqlAndBindings);
+function testsql(chainFn, valuesToCheck, contextsMap = contexts) {
+  for (const lang in valuesToCheck) {
+    const value = valuesToCheck[lang]
+    const evaluated = chainFn(contextsMap[lang]).toSQL()
+    if (typeof value === 'string') {
+      expect(value).to.equal(evaluated.sql)
     } else {
-      verifySqlResult(key, checkValue, sqlAndBindings);
+      if (typeof value.bindings === 'function') {
+        expect(evaluated.sql).to.equal(value.sql)
+        value.bindings(evaluated.bindings)
+      } else {
+        for(const key in value) {
+          if(typeof value[key] === 'function') {
+            value[key](evaluated[key]);
+          } else {
+            expect(evaluated[key]).to.deep.equal(value[key]);
+          }
+        }
+      }
+
     }
-  })
+  }
 }
 
-function testNativeSql(chain, valuesToCheck, selectedClients) {
-  selectedClients = selectedClients || clients;
-  Object.keys(valuesToCheck).forEach(function(key) {
-    var newChain = chain.clone();
-    newChain.client = selectedClients[key];
-    var sqlAndBindings = newChain.toSQL().toNative();
-    var checkValue = valuesToCheck[key];
-    verifySqlResult(key, checkValue, sqlAndBindings);
-  })
+function testNativeSql(chainFn, valuesToCheck, contextsMap = contexts) {
+  for (const lang in valuesToCheck) {
+    const value = valuesToCheck[lang]
+    const evaluated = chainFn(contextsMap[lang]).toSQL().toNative()
+    if (typeof value === 'string') {
+      expect(value).to.equal(evaluated.sql)
+    } else {
+      if (typeof value.bindings === 'function') {
+        expect(evaluated.sql).to.equal(value.sql)
+        value.bindings(evaluated.bindings)
+      } else {
+        for(const key in value) {
+          if(typeof value[key] === 'function') {
+            value[key](evaluated[key]);
+          } else {
+            expect(evaluated[key]).to.deep.equal(value[key]);
+          }
+        }
+      }
+
+    }
+  }
 }
 
-function testquery(chain, valuesToCheck, selectedClients) {
-  selectedClients = selectedClients || clients;
-  Object.keys(valuesToCheck).forEach(function(key) {
-    var newChain = chain.clone()
-        newChain.client = selectedClients[key]
-    var sqlString  = newChain.toQuery()
-    var checkValue = valuesToCheck[key]
-    expect(checkValue).to.equal(sqlString)
-  })
+function testquery(chainFn, valuesToCheck, asNull = false) {
+  for (const lang in valuesToCheck) {
+    const value = valuesToCheck[lang]
+    const evaluated = chainFn(asNull ? contextsWithNullAsDefault[lang] : contexts[lang])
+    if (typeof value === 'string') {
+      expect(value).to.equal(evaluated + '')
+    }
+  }
 }
 
 describe("Custom identifier wrapping", function() {
-  var customWrapperConfig = {
-    wrapIdentifier: (value, clientImpl, context) => {
-      var suffix = '_wrapper_was_here';
-      if (context && context.fancy) {
-        suffix = '_fancy_wrapper_was_here';
-      }
-      return clientImpl(value + suffix);
-    }
-  };
-
-  var clientsWithCustomIdentifierWrapper = {
-    mysql: new MySQL_Client(customWrapperConfig),
-    postgres: new PG_Client(customWrapperConfig),
-    redshift: new Redshift_Client(customWrapperConfig),
-    oracle: new Oracle_Client(customWrapperConfig),
-    oracledb: new Oracledb_Client(customWrapperConfig),
-    sqlite3: new SQLite3_Client(customWrapperConfig),
-    mssql: new MSSQL_Client(customWrapperConfig),
-  };
 
   it('should use custom wrapper', () => {
-    testsql(qb().withSchema('schema').select('users.foo as bar').from('users'), {
+    testsql((knex) => {
+
+      return knex.withSchema('schema').select('users.foo as bar').from('users');
+    }, {
       mysql: 'select `users_wrapper_was_here`.`foo_wrapper_was_here` as `bar_wrapper_was_here` from `schema_wrapper_was_here`.`users_wrapper_was_here`',
       oracle: 'select "users_wrapper_was_here"."foo_wrapper_was_here" "bar_wrapper_was_here" from "schema_wrapper_was_here"."users_wrapper_was_here"',
       mssql: 'select [users_wrapper_was_here].[foo_wrapper_was_here] as [bar_wrapper_was_here] from [schema_wrapper_was_here].[users_wrapper_was_here]',
@@ -124,30 +148,30 @@ describe("Custom identifier wrapping", function() {
       postgres: 'select "users_wrapper_was_here"."foo_wrapper_was_here" as "bar_wrapper_was_here" from "schema_wrapper_was_here"."users_wrapper_was_here"',
       redshift: 'select "users_wrapper_was_here"."foo_wrapper_was_here" as "bar_wrapper_was_here" from "schema_wrapper_was_here"."users_wrapper_was_here"',
       sqlite3: 'select `users_wrapper_was_here`.`foo_wrapper_was_here` as `bar_wrapper_was_here` from `schema_wrapper_was_here`.`users_wrapper_was_here`'
-    }, clientsWithCustomIdentifierWrapper);
+    }, contextsWithCustomIdentifierWrapper);
   });
 
   describe('queryContext', () => {
     it('should pass the query context to the custom wrapper', () => {
-      testsql(qb().withSchema('schema').select('users.foo as bar').from('users').queryContext({ fancy: true }), {
+      testsql((knex) => knex.withSchema('schema').select('users.foo as bar').from('users').queryContext({ fancy: true }), {
         mysql: 'select `users_fancy_wrapper_was_here`.`foo_fancy_wrapper_was_here` as `bar_fancy_wrapper_was_here` from `schema_fancy_wrapper_was_here`.`users_fancy_wrapper_was_here`',
         oracle: 'select "users_fancy_wrapper_was_here"."foo_fancy_wrapper_was_here" "bar_fancy_wrapper_was_here" from "schema_fancy_wrapper_was_here"."users_fancy_wrapper_was_here"',
         mssql: 'select [users_fancy_wrapper_was_here].[foo_fancy_wrapper_was_here] as [bar_fancy_wrapper_was_here] from [schema_fancy_wrapper_was_here].[users_fancy_wrapper_was_here]',
         oracledb: 'select "users_fancy_wrapper_was_here"."foo_fancy_wrapper_was_here" "bar_fancy_wrapper_was_here" from "schema_fancy_wrapper_was_here"."users_fancy_wrapper_was_here"',
         postgres: 'select "users_fancy_wrapper_was_here"."foo_fancy_wrapper_was_here" as "bar_fancy_wrapper_was_here" from "schema_fancy_wrapper_was_here"."users_fancy_wrapper_was_here"',
         sqlite3: 'select `users_fancy_wrapper_was_here`.`foo_fancy_wrapper_was_here` as `bar_fancy_wrapper_was_here` from `schema_fancy_wrapper_was_here`.`users_fancy_wrapper_was_here`'
-      }, clientsWithCustomIdentifierWrapper);
+      }, contextsWithCustomIdentifierWrapper);
     });
 
     it('should pass the query context for raw queries', () => {
-      testsql(qb().select(raw('??', [{ a: 'col1' }]).queryContext({ fancy: true })).from('users').queryContext({ fancy: true }), {
+      testsql((knex) => knex.select(raw('??', [{ a: 'col1' }]).queryContext({ fancy: true })).from('users').queryContext({ fancy: true }), {
         mysql: 'select `col1_fancy_wrapper_was_here` as `a_fancy_wrapper_was_here` from `users_fancy_wrapper_was_here`',
         oracle: 'select "col1_fancy_wrapper_was_here" "a_fancy_wrapper_was_here" from "users_fancy_wrapper_was_here"',
         mssql: 'select [col1_fancy_wrapper_was_here] as [a_fancy_wrapper_was_here] from [users_fancy_wrapper_was_here]',
         oracledb: 'select "col1_fancy_wrapper_was_here" "a_fancy_wrapper_was_here" from "users_fancy_wrapper_was_here"',
         postgres: 'select "col1_fancy_wrapper_was_here" as "a_fancy_wrapper_was_here" from "users_fancy_wrapper_was_here"',
         sqlite3: 'select `col1_fancy_wrapper_was_here` as `a_fancy_wrapper_was_here` from `users_fancy_wrapper_was_here`'
-      }, clientsWithCustomIdentifierWrapper);
+      }, contextsWithCustomIdentifierWrapper);
     });
 
     it('should allow chaining', () => {
@@ -185,7 +209,7 @@ describe("Custom identifier wrapping", function() {
 describe("QueryBuilder", function() {
 
   it("basic select", function() {
-    testsql(qb().select('*').from('users'), {
+    testsql((knex) => knex.select('*').from('users'), {
       mysql: 'select * from `users`',
       mssql: 'select * from [users]',
       postgres: 'select * from "users"',
@@ -194,7 +218,7 @@ describe("QueryBuilder", function() {
   });
 
   it("adding selects", function() {
-    testsql(qb().select('foo').select('bar').select(['baz', 'boom']).from('users'), {
+    testsql((knex) => knex.select('foo').select('bar').select(['baz', 'boom']).from('users'), {
       mysql: 'select `foo`, `bar`, `baz`, `boom` from `users`',
       mssql: 'select [foo], [bar], [baz], [boom] from [users]',
       postgres: 'select "foo", "bar", "baz", "boom" from "users"',
@@ -203,7 +227,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic select distinct", function() {
-    testsql(qb().distinct().select('foo', 'bar').from('users'), {
+    testsql((knex) => knex.distinct().select('foo', 'bar').from('users'), {
       mysql: {
         sql: 'select distinct `foo`, `bar` from `users`'
       },
@@ -220,7 +244,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic select with alias as property-value pairs", function() {
-    testsql(qb().select({bar: 'foo'}).from('users'), {
+    testsql((knex) => knex.select({bar: 'foo'}).from('users'), {
       mysql: 'select `foo` as `bar` from `users`',
       oracle: 'select "foo" "bar" from "users"',
       mssql: 'select [foo] as [bar] from [users]',
@@ -230,7 +254,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic select with mixed pure column and alias pair", function() {
-    testsql(qb().select('baz', {bar: 'foo'}).from('users'), {
+    testsql((knex) => knex.select('baz', {bar: 'foo'}).from('users'), {
       mysql: 'select `baz`, `foo` as `bar` from `users`',
       oracle: 'select "baz", "foo" "bar" from "users"',
       mssql: 'select [baz], [foo] as [bar] from [users]',
@@ -240,7 +264,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic select with array-wrapped alias pair", function() {
-    testsql(qb().select(['baz', {bar: 'foo'}]).from('users'), {
+    testsql((knex) => knex.select(['baz', {bar: 'foo'}]).from('users'), {
       mysql: 'select `baz`, `foo` as `bar` from `users`',
       oracle: 'select "baz", "foo" "bar" from "users"',
       mssql: 'select [baz], [foo] as [bar] from [users]',
@@ -250,7 +274,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic select with mixed pure column and alias pair", function() {
-    testsql(qb().select({bar: 'foo'}).from('users'), {
+    testsql((knex) => knex.select({bar: 'foo'}).from('users'), {
       mysql: 'select `foo` as `bar` from `users`',
       oracle: 'select "foo" "bar" from "users"',
       mssql: 'select [foo] as [bar] from [users]',
@@ -260,7 +284,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic old-style alias", function() {
-    testsql(qb().select('foo as bar').from('users'), {
+    testsql((knex) => knex.select('foo as bar').from('users'), {
       mysql: 'select `foo` as `bar` from `users`',
       oracle: 'select "foo" "bar" from "users"',
       mssql: 'select [foo] as [bar] from [users]',
@@ -271,7 +295,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic alias trims spaces", function() {
-    testsql(qb().select(' foo   as bar ').from('users'), {
+    testsql((knex) => knex.select(' foo   as bar ').from('users'), {
       mysql: 'select `foo` as `bar` from `users`',
       oracle: 'select "foo" "bar" from "users"',
       mssql: 'select [foo] as [bar] from [users]',
@@ -282,7 +306,7 @@ describe("QueryBuilder", function() {
   });
 
   it("allows for case-insensitive alias", function() {
-    testsql(qb().select(' foo   aS bar ').from('users'), {
+    testsql((knex) => knex.select(' foo   aS bar ').from('users'), {
       mysql: 'select `foo` as `bar` from `users`',
       oracle: 'select "foo" "bar" from "users"',
       mssql: 'select [foo] as [bar] from [users]',
@@ -293,7 +317,7 @@ describe("QueryBuilder", function() {
   });
 
   it("allows alias with dots in the identifier name", function() {
-    testsql(qb().select('foo as bar.baz').from('users'), {
+    testsql((knex) => knex.select('foo as bar.baz').from('users'), {
       mysql: 'select `foo` as `bar.baz` from `users`',
       oracle: 'select "foo" "bar.baz" from "users"',
       mssql: 'select [foo] as [bar.baz] from [users]',
@@ -303,15 +327,15 @@ describe("QueryBuilder", function() {
   });
 
   it("less trivial case of object alias syntax", () => {
-    testsql(qb()
+    testsql((knex) => knex
       .select({
         bar: 'table1.*',
-        subq: qb().from('test').select(raw('??', [{ a: 'col1', b: 'col2' }])).limit(1)
+        subq: knex.from('test').select(raw('??', [{ a: 'col1', b: 'col2' }])).limit(1)
       })
       .from({
         table1: 'table',
         table2: 'table',
-        subq: qb().from('test').limit(1)
+        subq: knex.from('test').limit(1)
       }), {
         mysql: 'select `table1`.* as `bar`, (select `col1` as `a`, `col2` as `b` from `test` limit ?) as `subq` from `table` as `table1`, `table` as `table2`, (select * from `test` limit ?) as `subq`',
         postgres: 'select "table1".* as "bar", (select "col1" as "a", "col2" as "b" from "test" limit ?) as "subq" from "table" as "table1", "table" as "table2", (select * from "test" limit ?) as "subq"',
@@ -322,7 +346,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic table wrapping", function() {
-    testsql(qb().select('*').from('public.users'), {
+    testsql((knex) => knex.select('*').from('public.users'), {
       mysql: 'select * from `public`.`users`',
       mssql: 'select * from [public].[users]',
       postgres: 'select * from "public"."users"',
@@ -331,7 +355,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic table wrapping with declared schema", function() {
-    testsql(qb().withSchema('myschema').select('*').from('users'), {
+    testsql((knex) => knex.withSchema('myschema').select('*').from('users'), {
       mysql: 'select * from `myschema`.`users`',
       postgres: 'select * from "myschema"."users"',
       redshift: 'select * from "myschema"."users"',
@@ -340,13 +364,13 @@ describe("QueryBuilder", function() {
   });
 
   it("selects from only", function() {
-    testsql(qb().select('*').from('users', { only: true }), {
+    testsql((knex) => knex.select('*').from('users', { only: true }), {
       postgres: 'select * from only "users"',
     });
   });
 
   it("clear a select", function() {
-    testsql(qb().select('id', 'email').from('users').clearSelect(), {
+    testsql((knex) => knex.select('id', 'email').from('users').clearSelect(), {
       mysql: {
         sql: 'select * from `users`'
       },
@@ -361,7 +385,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testsql(qb().select('id').from('users').clearSelect().select('email'), {
+    testsql((knex) => knex.select('id').from('users').clearSelect().select('email'), {
       mysql: {
         sql: 'select `email` from `users`'
       },
@@ -378,7 +402,7 @@ describe("QueryBuilder", function() {
   });
 
   it("clear a where", function() {
-    testsql(qb().select('id').from('users').where('id', '=', 1).clearWhere(), {
+    testsql((knex) => knex.select('id').from('users').where('id', '=', 1).clearWhere(), {
       mysql: {
         sql: 'select `id` from `users`'
       },
@@ -393,7 +417,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testsql(qb().select('id').from('users').where('id', '=', 1).clearWhere().where('id', '=', 2), {
+    testsql((knex) => knex.select('id').from('users').where('id', '=', 1).clearWhere().where('id', '=', 2), {
       mysql: {
         sql: 'select `id` from `users` where `id` = ?',
         bindings: [2]
@@ -414,7 +438,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic wheres", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1), {
       mysql: {
         sql: 'select * from `users` where `id` = ?',
         bindings: [1]
@@ -433,7 +457,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testquery(qb().select('*').from('users').where('id', '=', 1), {
+    testquery((knex) => knex.select('*').from('users').where('id', '=', 1), {
       mysql: 'select * from `users` where `id` = 1',
       postgres: 'select * from "users" where "id" = 1',
       redshift: 'select * from "users" where "id" = 1',
@@ -443,7 +467,7 @@ describe("QueryBuilder", function() {
 
 
   it("where not", function() {
-    testsql(qb().select('*').from('users').whereNot('id', '=', 1), {
+    testsql((knex) => knex.select('*').from('users').whereNot('id', '=', 1), {
       mysql: {
         sql: 'select * from `users` where not `id` = ?',
         bindings: [1]
@@ -462,7 +486,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testquery(qb().select('*').from('users').whereNot('id', '=', 1), {
+    testquery((knex) => knex.select('*').from('users').whereNot('id', '=', 1), {
       mysql: 'select * from `users` where not `id` = 1',
       postgres: 'select * from "users" where not "id" = 1',
       redshift: 'select * from "users" where not "id" = 1',
@@ -471,7 +495,7 @@ describe("QueryBuilder", function() {
   });
 
   it("grouped or where not", function() {
-    testsql(qb().select('*').from('users').whereNot(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
+    testsql((knex) => knex.select('*').from('users').whereNot(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
       mysql: {
         sql: 'select * from `users` where not (`id` = ? or not `id` = ?)',
         bindings: [1, 3]
@@ -490,7 +514,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testquery(qb().select('*').from('users').whereNot(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
+    testquery((knex) => knex.select('*').from('users').whereNot(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
       mysql: 'select * from `users` where not (`id` = 1 or not `id` = 3)',
       postgres: 'select * from "users" where not ("id" = 1 or not "id" = 3)',
       redshift: 'select * from "users" where not ("id" = 1 or not "id" = 3)',
@@ -499,7 +523,7 @@ describe("QueryBuilder", function() {
   });
 
   it("grouped or where not alternate", function() {
-    testsql(qb().select('*').from('users').where(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
+    testsql((knex) => knex.select('*').from('users').where(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
       mysql: {
         sql: 'select * from `users` where (`id` = ? or not `id` = ?)',
         bindings: [1, 3]
@@ -518,7 +542,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testquery(qb().select('*').from('users').where(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
+    testquery((knex) => knex.select('*').from('users').where(function() { this.where('id', '=', 1).orWhereNot('id', '=', 3); }), {
       mysql: 'select * from `users` where (`id` = 1 or not `id` = 3)',
       postgres: 'select * from "users" where ("id" = 1 or not "id" = 3)',
       redshift: 'select * from "users" where ("id" = 1 or not "id" = 3)',
@@ -528,7 +552,7 @@ describe("QueryBuilder", function() {
 
 
   it("where not object", function() {
-    testsql(qb().select('*').from('users').whereNot({first_name: 'Test', last_name: 'User'}), {
+    testsql((knex) => knex.select('*').from('users').whereNot({first_name: 'Test', last_name: 'User'}), {
       mysql: {
         sql: 'select * from `users` where not `first_name` = ? and not `last_name` = ?',
         bindings: ['Test', 'User']
@@ -547,7 +571,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testquery(qb().select('*').from('users').whereNot({first_name: 'Test', last_name: 'User'}), {
+    testquery((knex) => knex.select('*').from('users').whereNot({first_name: 'Test', last_name: 'User'}), {
       mysql: 'select * from `users` where not `first_name` = \'Test\' and not `last_name` = \'User\'',
       postgres: 'select * from "users" where not "first_name" = \'Test\' and not "last_name" = \'User\'',
       redshift: 'select * from "users" where not "first_name" = \'Test\' and not "last_name" = \'User\'',
@@ -557,7 +581,7 @@ describe("QueryBuilder", function() {
 
 
   it('where bool', function() {
-    testquery(qb().select('*').from('users').where(true), {
+    testquery((knex) => knex.select('*').from('users').where(true), {
       mysql: 'select * from `users` where 1 = 1',
       sqlite3: 'select * from `users` where 1 = 1',
       mssql: 'select * from [users] where 1 = 1',
@@ -566,7 +590,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where betweens", function() {
-    testsql(qb().select('*').from('users').whereBetween('id', [1, 2]), {
+    testsql((knex) => knex.select('*').from('users').whereBetween('id', [1, 2]), {
       mysql: {
         sql: 'select * from `users` where `id` between ? and ?',
         bindings: [1, 2]
@@ -587,7 +611,7 @@ describe("QueryBuilder", function() {
   });
 
   it("and where betweens", function() {
-    testsql(qb().select('*').from('users').where('name', '=', 'user1').andWhereBetween('id', [1, 2]), {
+    testsql((knex) => knex.select('*').from('users').where('name', '=', 'user1').andWhereBetween('id', [1, 2]), {
       mysql: {
         sql: 'select * from `users` where `name` = ? and `id` between ? and ?',
         bindings: ['user1', 1, 2]
@@ -608,7 +632,7 @@ describe("QueryBuilder", function() {
   });
 
   it("and where not betweens", function() {
-    testsql(qb().select('*').from('users').where('name', '=', 'user1').andWhereNotBetween('id', [1, 2]), {
+    testsql((knex) => knex.select('*').from('users').where('name', '=', 'user1').andWhereNotBetween('id', [1, 2]), {
       mysql: {
         sql: 'select * from `users` where `name` = ? and `id` not between ? and ?',
         bindings: ['user1', 1, 2]
@@ -629,7 +653,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where betweens, alternate", function() {
-    testsql(qb().select('*').from('users').where('id', 'BeTween', [1, 2]), {
+    testsql((knex) => knex.select('*').from('users').where('id', 'BeTween', [1, 2]), {
       mysql: {
         sql: 'select * from `users` where `id` between ? and ?',
         bindings: [1, 2]
@@ -650,7 +674,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where not between", function() {
-    testsql(qb().select('*').from('users').whereNotBetween('id', [1, 2]), {
+    testsql((knex) => knex.select('*').from('users').whereNotBetween('id', [1, 2]), {
       mysql: {
         sql: 'select * from `users` where `id` not between ? and ?',
         bindings: [1, 2]
@@ -671,7 +695,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where not between, alternate", function() {
-    testsql(qb().select('*').from('users').where('id', 'not between ', [1, 2]), {
+    testsql((knex) => knex.select('*').from('users').where('id', 'not between ', [1, 2]), {
       mysql: {
         sql: 'select * from `users` where `id` not between ? and ?',
         bindings: [1, 2]
@@ -692,7 +716,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic or wheres", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).orWhere('email', '=', 'foo'), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).orWhere('email', '=', 'foo'), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `email` = ?',
         bindings: [1, 'foo']
@@ -713,7 +737,7 @@ describe("QueryBuilder", function() {
   });
 
   it("chained or wheres", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).or.where('email', '=', 'foo'), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).or.where('email', '=', 'foo'), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `email` = ?',
         bindings: [1, 'foo']
@@ -734,7 +758,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw column wheres", function() {
-    testsql(qb().select('*').from('users').where(raw('LCASE("name")'), 'foo'), {
+    testsql((knex) => knex.select('*').from('users').where(raw('LCASE("name")'), 'foo'), {
       mysql: {
         sql: 'select * from `users` where LCASE("name") = ?',
         bindings: ['foo']
@@ -755,7 +779,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw wheres", function() {
-    testsql(qb().select('*').from('users').where(raw('id = ? or email = ?', [1, 'foo'])), {
+    testsql((knex) => knex.select('*').from('users').where(raw('id = ? or email = ?', [1, 'foo'])), {
       mysql: {
         sql: 'select * from `users` where id = ? or email = ?',
         bindings: [1, 'foo']
@@ -776,7 +800,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw or wheres", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).orWhere(raw('email = ?', ['foo'])), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).orWhere(raw('email = ?', ['foo'])), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or email = ?',
         bindings: [1, 'foo']
@@ -797,7 +821,7 @@ describe("QueryBuilder", function() {
   });
 
   it("chained raw or wheres", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).or.where(raw('email = ?', ['foo'])), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).or.where(raw('email = ?', ['foo'])), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or email = ?',
         bindings: [1, 'foo']
@@ -818,7 +842,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic where ins", function() {
-    testsql(qb().select('*').from('users').whereIn('id', [1, 2, 3]), {
+    testsql((knex) => knex.select('*').from('users').whereIn('id', [1, 2, 3]), {
       mysql: {
         sql: 'select * from `users` where `id` in (?, ?, ?)',
         bindings: [1, 2, 3]
@@ -839,7 +863,7 @@ describe("QueryBuilder", function() {
   });
 
   it("orWhereIn", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).orWhereIn('id', [1, 2, 3]), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).orWhereIn('id', [1, 2, 3]), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `id` in (?, ?, ?)',
         bindings: [1, 1, 2, 3]
@@ -860,7 +884,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic where not ins", function() {
-    testsql(qb().select('*').from('users').whereNotIn('id', [1, 2, 3]), {
+    testsql((knex) => knex.select('*').from('users').whereNotIn('id', [1, 2, 3]), {
       mysql: {
         sql: 'select * from `users` where `id` not in (?, ?, ?)',
         bindings: [1, 2, 3]
@@ -881,7 +905,7 @@ describe("QueryBuilder", function() {
   });
 
   it("chained or where not in", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).or.not.whereIn('id', [1, 2, 3]), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).or.not.whereIn('id', [1, 2, 3]), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `id` not in (?, ?, ?)',
         bindings: [1, 1, 2, 3]
@@ -902,7 +926,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or.whereIn", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).or.whereIn('id', [4, 2, 3]), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).or.whereIn('id', [4, 2, 3]), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `id` in (?, ?, ?)',
         bindings: [1, 4, 2, 3]
@@ -923,7 +947,7 @@ describe("QueryBuilder", function() {
   });
 
   it("chained basic where not ins", function() {
-    testsql(qb().select('*').from('users').not.whereIn('id', [1, 2, 3]), {
+    testsql((knex) => knex.select('*').from('users').not.whereIn('id', [1, 2, 3]), {
       mysql: {
         sql: 'select * from `users` where `id` not in (?, ?, ?)',
         bindings: [1, 2, 3]
@@ -944,7 +968,7 @@ describe("QueryBuilder", function() {
   });
 
   it("chained or where not in", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).or.not.whereIn('id', [1, 2, 3]), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).or.not.whereIn('id', [1, 2, 3]), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `id` not in (?, ?, ?)',
         bindings: [1, 1, 2, 3]
@@ -965,7 +989,7 @@ describe("QueryBuilder", function() {
   });
 
   it('whereIn with empty array, #477', function() {
-    testsql(qb().select('*').from('users').whereIn('id', []), {
+    testsql((knex) => knex.select('*').from('users').whereIn('id', []), {
       mysql: {
         sql: 'select * from `users` where 1 = ?',
         bindings: [0]
@@ -990,7 +1014,7 @@ describe("QueryBuilder", function() {
   });
 
   it('whereNotIn with empty array, #477', function() {
-    testsql(qb().select('*').from('users').whereNotIn('id', []), {
+    testsql((knex) => knex.select('*').from('users').whereNotIn('id', []), {
       mysql: {
         sql: 'select * from `users` where 1 = ?',
         bindings: [1]
@@ -1015,8 +1039,8 @@ describe("QueryBuilder", function() {
   });
 
   it('should allow a function as the first argument, for a grouped where clause', function() {
-    var partial = qb().table('test').where('id', '=', 1);
-    testsql(partial, {
+    var getPartial = (knex) => knex.table('test').where('id', '=', 1);
+    testsql(getPartial, {
       mysql: 'select * from `test` where `id` = ?',
       mssql: 'select * from [test] where [id] = ?',
       postgres: 'select * from "test" where "id" = ?'
@@ -1027,7 +1051,7 @@ describe("QueryBuilder", function() {
       this.where({id: 3}).orWhere('id', 4);
     };
 
-    testsql(partial.where(subWhere), {
+    testsql((knex) => getPartial(knex).where(subWhere), {
       mysql: {
         sql: 'select * from `test` where `id` = ? and (`id` = ? or `id` = ?)',
         bindings: [1, 3, 4]
@@ -1048,14 +1072,14 @@ describe("QueryBuilder", function() {
   });
 
   it('should accept a function as the "value", for a sub select', function() {
-    var chain = qb().where('id', '=', function(qb) {
+    var getChain = (knex) => knex.where('id', '=', function(qb) {
       expect(this).to.equal(qb);
       this.select('account_id').from('names').where('names.id', '>', 1).orWhere(function() {
         this.where('names.first_name', 'like', 'Tim%').andWhere('names.id', '>', 10);
       });
     });
 
-    testsql(chain, {
+    testsql(getChain, {
       mysql: {
         sql: 'select * where `id` = (select `account_id` from `names` where `names`.`id` > ? or (`names`.`first_name` like ? and `names`.`id` > ?))',
         bindings: [1, 'Tim%', 10]
@@ -1074,7 +1098,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    testquery(chain, {
+    testquery(getChain, {
       mysql: 'select * where `id` = (select `account_id` from `names` where `names`.`id` > 1 or (`names`.`first_name` like \'Tim%\' and `names`.`id` > 10))',
       postgres: 'select * where "id" = (select "account_id" from "names" where "names"."id" > 1 or ("names"."first_name" like \'Tim%\' and "names"."id" > 10))',
       redshift: 'select * where "id" = (select "account_id" from "names" where "names"."id" > 1 or ("names"."first_name" like \'Tim%\' and "names"."id" > 10))',
@@ -1083,14 +1107,14 @@ describe("QueryBuilder", function() {
   });
 
   it('should accept a function as the "value", for a sub select when chained', function() {
-    var chain = qb().where('id', '=', function(qb) {
+    var getChain = (knex) => knex.where('id', '=', function(qb) {
       expect(this).to.equal(qb);
       this.select('account_id').from('names').where('names.id', '>', 1).or.where(function() {
         this.where('names.first_name', 'like', 'Tim%').and.where('names.id', '>', 10);
       });
     });
 
-    testsql(chain, {
+    testsql(getChain, {
       mysql: {
         sql: 'select * where `id` = (select `account_id` from `names` where `names`.`id` > ? or (`names`.`first_name` like ? and `names`.`id` > ?))',
         bindings: [1, 'Tim%', 10]
@@ -1111,7 +1135,7 @@ describe("QueryBuilder", function() {
   });
 
   it('should not do whereNull on where("foo", "<>", null) #76', function() {
-    testquery(qb().where('foo', '<>', null), {
+    testquery((knex) => knex.where('foo', '<>', null), {
       mysql: 'select * where `foo` <> NULL',
       mssql: 'select * where [foo] <> NULL',
       postgres: 'select * where "foo" <> NULL'
@@ -1119,7 +1143,7 @@ describe("QueryBuilder", function() {
   });
 
   it('should expand where("foo", "!=") to - where id = "!="', function() {
-    testquery(qb().where('foo', '!='), {
+    testquery((knex) => knex.where('foo', '!='), {
       mysql: 'select * where `foo` = \'!=\'',
       mssql: 'select * where [foo] = \'!=\'',
       postgres: 'select * where "foo" = \'!=\''
@@ -1127,10 +1151,10 @@ describe("QueryBuilder", function() {
   });
 
   it("unions", function() {
-    var chain = qb().select('*').from('users').where('id', '=', 1).union(function() {
+    var getChain = (knex) => knex.select('*').from('users').where('id', '=', 1).union(function() {
       this.select('*').from('users').where('id', '=', 2);
     });
-    testsql(chain, {
+    testsql(getChain, {
       mysql: {
         sql: 'select * from `users` where `id` = ? union select * from `users` where `id` = ?',
         bindings: [1, 2]
@@ -1149,7 +1173,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    var multipleArgumentsChain = qb().select('*').from('users').where({id: 1}).union(function() {
+    var multipleArgumentsChain = (knex) => knex.select('*').from('users').where({id: 1}).union(function() {
       this.select('*').from('users').where({id: 2});
     }, function() {
       this.select('*').from('users').where({id: 3});
@@ -1173,7 +1197,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    var arrayChain = qb().select('*').from('users').where({id: 1}).union([
+    var arrayChain = (knex) => knex.select('*').from('users').where({id: 1}).union([
       function() {
         this.select('*').from('users').where({id: 2});
       }, function() {
@@ -1201,7 +1225,7 @@ describe("QueryBuilder", function() {
   });
 
   it("wraps unions", function() {
-    var wrappedChain = qb().select('*').from('users').where('id', 'in', function() {
+    var wrappedChain = (knex) => knex.select('*').from('users').where('id', 'in', function() {
       this.table('users').max("id").union(function() {
         this.table('users').min("id");
       }, true);
@@ -1226,7 +1250,7 @@ describe("QueryBuilder", function() {
     });
 
     // worthwhile since we're playing games with the 'wrap' specification with arguments
-    var multipleArgumentsWrappedChain = qb().select('*').from('users').where({id: 1}).union(function() {
+    var multipleArgumentsWrappedChain = (knex) => knex.select('*').from('users').where({id: 1}).union(function() {
       this.select('*').from('users').where({id: 2});
     }, function() {
       this.select('*').from('users').where({id: 3});
@@ -1250,7 +1274,7 @@ describe("QueryBuilder", function() {
       },
     });
 
-    var arrayWrappedChain = qb().select('*').from('users').where({id: 1}).union([
+    var arrayWrappedChain = (knex) => knex.select('*').from('users').where({id: 1}).union([
       function() {
         this.select('*').from('users').where({id: 2});
       }, function() {
@@ -1287,7 +1311,7 @@ describe("QueryBuilder", function() {
   // });
 
   it("union alls", function() {
-    var chain = qb().select('*').from('users').where('id', '=', 1).unionAll(function() {
+    var chain = (knex) => knex.select('*').from('users').where('id', '=', 1).unionAll(function() {
       this.select('*').from('users').where('id', '=', 2);
     });
     testsql(chain, {
@@ -1311,9 +1335,9 @@ describe("QueryBuilder", function() {
   });
 
   it("multiple unions", function() {
-    var chain = qb().select('*').from('users').where('id', '=', 1)
-      .union(qb().select('*').from('users').where('id', '=', 2))
-      .union(qb().select('*').from('users').where('id', '=', 3));
+    var chain = (knex) => knex.select('*').from('users').where('id', '=', 1)
+      .union(knex.select('*').from('users').where('id', '=', 2))
+      .union(knex.select('*').from('users').where('id', '=', 3));
     testsql(chain, {
       mysql: {
         sql: 'select * from `users` where `id` = ? union select * from `users` where `id` = ? union select * from `users` where `id` = ?',
@@ -1335,9 +1359,9 @@ describe("QueryBuilder", function() {
   });
 
   it("multiple union alls", function() {
-    var chain = qb().select('*').from('users').where('id', '=', 1)
-      .unionAll(qb().select('*').from('users').where('id', '=', 2))
-      .unionAll(qb().select('*').from('users').where('id', '=', 3));
+    var chain = (knex) => knex.select('*').from('users').where('id', '=', 1)
+      .unionAll(knex.select('*').from('users').where('id', '=', 2))
+      .unionAll(knex.select('*').from('users').where('id', '=', 3));
 
     testsql(chain, {
       mysql: {
@@ -1360,9 +1384,7 @@ describe("QueryBuilder", function() {
   });
 
   it("sub select where ins", function() {
-    testsql(qb().select('*').from('users').whereIn('id', function(qb) {
-      qb.select('id').from('users').where('age', '>', 25).limit(3);
-    }), {
+    testsql((knex) => knex.select('*').from('users').whereIn('id', knex.select('id').from('users').where('age', '>', 25).limit(3)), {
       mysql: {
         sql: 'select * from `users` where `id` in (select `id` from `users` where `age` > ? limit ?)',
         bindings: [25, 3]
@@ -1391,9 +1413,7 @@ describe("QueryBuilder", function() {
   });
 
   it("sub select where not ins", function() {
-    testsql(qb().select('*').from('users').whereNotIn('id', function(qb) {
-      qb.select('id').from('users').where('age', '>', 25);
-    }), {
+    testsql((knex) => knex.select('*').from('users').whereNotIn('id', knex.select('id').from('users').where('age', '>', 25)), {
       mysql: {
         sql: 'select * from `users` where `id` not in (select `id` from `users` where `age` > ?)',
         bindings: [25]
@@ -1414,7 +1434,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic where nulls", function() {
-    testsql(qb().select('*').from('users').whereNull('id'), {
+    testsql((knex) => knex.select('*').from('users').whereNull('id'), {
       mysql: {
         sql: 'select * from `users` where `id` is null',
         bindings: []
@@ -1435,7 +1455,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic or where nulls", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).orWhereNull('id'), {
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).orWhereNull('id'), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `id` is null',
         bindings: [1]
@@ -1456,7 +1476,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic where not nulls", function() {
-    testsql(qb().select('*').from('users').whereNotNull('id'), {
+    testsql((knex) => knex.select('*').from('users').whereNotNull('id'), {
       mysql: {
         sql: 'select * from `users` where `id` is not null',
         bindings: []
@@ -1477,7 +1497,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic or where not nulls", function() {
-    testsql(qb().select('*').from('users').where('id', '>', 1).orWhereNotNull('id'), {
+    testsql((knex) => knex.select('*').from('users').where('id', '>', 1).orWhereNotNull('id'), {
       mysql: {
         sql: 'select * from `users` where `id` > ? or `id` is not null',
         bindings: [1]
@@ -1498,7 +1518,7 @@ describe("QueryBuilder", function() {
   });
 
   it("group bys", function() {
-    testsql(qb().select('*').from('users').groupBy('id', 'email'), {
+    testsql((knex) => knex.select('*').from('users').groupBy('id', 'email'), {
       mysql: {
         sql: 'select * from `users` group by `id`, `email`',
         bindings: []
@@ -1519,7 +1539,7 @@ describe("QueryBuilder", function() {
   });
 
   it("order bys", function() {
-    testsql(qb().select('*').from('users').orderBy('email').orderBy('age', 'desc'), {
+    testsql((knex) => knex.select('*').from('users').orderBy('email').orderBy('age', 'desc'), {
       mysql: {
         sql: 'select * from `users` order by `email` asc, `age` desc',
         bindings: []
@@ -1540,7 +1560,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw group bys", function() {
-    testsql(qb().select('*').from('users').groupByRaw('id, email'), {
+    testsql((knex) => knex.select('*').from('users').groupByRaw('id, email'), {
       mysql: {
         sql: 'select * from `users` group by id, email',
         bindings: []
@@ -1561,7 +1581,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw order bys with default direction", function() {
-    testsql(qb().select('*').from('users').orderBy(raw('col NULLS LAST')), {
+    testsql((knex) => knex.select('*').from('users').orderBy(raw('col NULLS LAST')), {
       mysql: {
         sql: 'select * from `users` order by col NULLS LAST asc',
         bindings: []
@@ -1582,7 +1602,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw order bys with specified direction", function() {
-    testsql(qb().select('*').from('users').orderBy(raw('col NULLS LAST'), 'desc'), {
+    testsql((knex) => knex.select('*').from('users').orderBy(raw('col NULLS LAST'), 'desc'), {
       mysql: {
         sql: 'select * from `users` order by col NULLS LAST desc',
         bindings: []
@@ -1603,7 +1623,7 @@ describe("QueryBuilder", function() {
   });
 
   it("orderByRaw", function() {
-    testsql(qb().select('*').from('users').orderByRaw('col NULLS LAST DESC'), {
+    testsql((knex) => knex.select('*').from('users').orderByRaw('col NULLS LAST DESC'), {
       mysql: {
         sql: 'select * from `users` order by col NULLS LAST DESC',
         bindings: []
@@ -1624,7 +1644,7 @@ describe("QueryBuilder", function() {
   });
 
   it("orderByRaw second argument is the binding", function() {
-    testsql(qb().select('*').from('users').orderByRaw('col NULLS LAST ?', 'dEsc'), {
+    testsql((knex) => knex.select('*').from('users').orderByRaw('col NULLS LAST ?', 'dEsc'), {
       mysql: {
         sql: 'select * from `users` order by col NULLS LAST ?',
         bindings: ['dEsc']
@@ -1645,7 +1665,7 @@ describe("QueryBuilder", function() {
   });
 
   it("multiple order bys", function() {
-    testsql(qb().select('*').from('users').orderBy('email').orderBy('age', 'desc'), {
+    testsql((knex) => knex.select('*').from('users').orderBy('email').orderBy('age', 'desc'), {
       mysql: {
         sql: 'select * from `users` order by `email` asc, `age` desc',
         bindings: []
@@ -1666,7 +1686,7 @@ describe("QueryBuilder", function() {
   });
 
   it("havings", function() {
-    testsql(qb().select('*').from('users').having('email', '>', 1), {
+    testsql((knex) => knex.select('*').from('users').having('email', '>', 1), {
       mysql: 'select * from `users` having `email` > ?',
       mssql: 'select * from [users] having [email] > ?',
       postgres: 'select * from "users" having "email" > ?',
@@ -1677,7 +1697,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having", function() {
-    testsql(qb().select('*').from('users').having('baz', '>', 5).orHaving('email', '=', 10), {
+    testsql((knex) => knex.select('*').from('users').having('baz', '>', 5).orHaving('email', '=', 10), {
       mysql: 'select * from `users` having `baz` > ? or `email` = ?',
       mssql: 'select * from [users] having [baz] > ? or [email] = ?',
       postgres: 'select * from "users" having "baz" > ? or "email" = ?',
@@ -1688,7 +1708,7 @@ describe("QueryBuilder", function() {
   });
 
   it("nested having", function() {
-    testsql(qb().select('*').from('users').having(function(){
+    testsql((knex) => knex.select('*').from('users').having(function(){
       this.where('email', '>', 1);
     }), {
       mysql: 'select * from `users` having (`email` > ?)',
@@ -1701,7 +1721,7 @@ describe("QueryBuilder", function() {
   });
 
   it("nested or havings", function() {
-    testsql(qb().select('*').from('users').having(function(){
+    testsql((knex) => knex.select('*').from('users').having(function(){
       this.where('email', '>', 10);
       this.orWhere('email', '=', 7);
     }), {
@@ -1715,7 +1735,7 @@ describe("QueryBuilder", function() {
   });
 
   it("grouped having", function() {
-    testsql(qb().select('*').from('users').groupBy('email').having('email', '>', 1), {
+    testsql((knex) => knex.select('*').from('users').groupBy('email').having('email', '>', 1), {
       mysql: 'select * from `users` group by `email` having `email` > ?',
       mssql: 'select * from [users] group by [email] having [email] > ?',
       postgres: 'select * from "users" group by "email" having "email" > ?',
@@ -1726,7 +1746,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having from", function() {
-    testsql(qb().select('email as foo_email').from('users').having('foo_email', '>', 1), {
+    testsql((knex) => knex.select('email as foo_email').from('users').having('foo_email', '>', 1), {
       mysql: 'select `email` as `foo_email` from `users` having `foo_email` > ?',
       oracle: 'select "email" "foo_email" from "users" having "foo_email" > ?',
       mssql: 'select [email] as [foo_email] from [users] having [foo_email] > ?',
@@ -1736,7 +1756,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw havings", function() {
-    testsql(qb().select('*').from('users').having(raw('user_foo < user_bar')), {
+    testsql((knex) => knex.select('*').from('users').having(raw('user_foo < user_bar')), {
       mysql: 'select * from `users` having user_foo < user_bar',
       mssql: 'select * from [users] having user_foo < user_bar',
       postgres: 'select * from "users" having user_foo < user_bar',
@@ -1747,7 +1767,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw or havings", function() {
-    testsql(qb().select('*').from('users').having('baz', '=', 1).orHaving(raw('user_foo < user_bar')), {
+    testsql((knex) => knex.select('*').from('users').having('baz', '=', 1).orHaving(raw('user_foo < user_bar')), {
       mysql: 'select * from `users` having `baz` = ? or user_foo < user_bar',
       mssql: 'select * from [users] having [baz] = ? or user_foo < user_bar',
       postgres: 'select * from "users" having "baz" = ? or user_foo < user_bar',
@@ -1758,7 +1778,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having null", function() {
-    testsql(qb().select('*').from('users').havingNull('baz'), {
+    testsql((knex) => knex.select('*').from('users').havingNull('baz'), {
       mysql: 'select * from `users` having `baz` is null',
       mssql: 'select * from [users] having [baz] is null',
       postgres: 'select * from "users" having "baz" is null',
@@ -1769,7 +1789,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having null", function() {
-    testsql(qb().select('*').from('users').havingNull('baz').orHavingNull('foo'), {
+    testsql((knex) => knex.select('*').from('users').havingNull('baz').orHavingNull('foo'), {
       mysql: 'select * from `users` having `baz` is null or `foo` is null',
       mssql: 'select * from [users] having [baz] is null or [foo] is null',
       postgres: 'select * from "users" having "baz" is null or "foo" is null',
@@ -1780,7 +1800,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having not null", function() {
-    testsql(qb().select('*').from('users').havingNotNull('baz'), {
+    testsql((knex) => knex.select('*').from('users').havingNotNull('baz'), {
       mysql: 'select * from `users` having `baz` is not null',
       mssql: 'select * from [users] having [baz] is not null',
       postgres: 'select * from "users" having "baz" is not null',
@@ -1791,7 +1811,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having not null", function() {
-    testsql(qb().select('*').from('users').havingNotNull('baz').orHavingNotNull('foo'), {
+    testsql((knex) => knex.select('*').from('users').havingNotNull('baz').orHavingNotNull('foo'), {
       mysql: 'select * from `users` having `baz` is not null or `foo` is not null',
       mssql: 'select * from [users] having [baz] is not null or [foo] is not null',
       postgres: 'select * from "users" having "baz" is not null or "foo" is not null',
@@ -1802,7 +1822,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having exists", function() {
-    testsql(qb().select('*').from('users').havingExists(function() {
+    testsql((knex) => knex.select('*').from('users').havingExists(function() {
       this.select('baz').from('users');
     }), {
       mysql: 'select * from `users` having exists (select `baz` from `users`)',
@@ -1815,7 +1835,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having exists", function() {
-    testsql(qb().select('*').from('users').havingExists(function() {
+    testsql((knex) => knex.select('*').from('users').havingExists(function() {
       this.select('baz').from('users');
     }).orHavingExists(function() {
       this.select('foo').from('users');
@@ -1830,7 +1850,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having not exists", function() {
-    testsql(qb().select('*').from('users').havingNotExists(function() {
+    testsql((knex) => knex.select('*').from('users').havingNotExists(function() {
       this.select('baz').from('users');
     }), {
       mysql: 'select * from `users` having not exists (select `baz` from `users`)',
@@ -1843,7 +1863,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having not exists", function() {
-    testsql(qb().select('*').from('users').havingNotExists(function() {
+    testsql((knex) => knex.select('*').from('users').havingNotExists(function() {
       this.select('baz').from('users');
     }).orHavingNotExists(function() {
       this.select('foo').from('users');
@@ -1858,7 +1878,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having between", function() {
-    testsql(qb().select('*').from('users').havingBetween('baz', [5, 10]), {
+    testsql((knex) => knex.select('*').from('users').havingBetween('baz', [5, 10]), {
       mysql: 'select * from `users` having `baz` between ? and ?',
       mssql: 'select * from [users] having [baz] between ? and ?',
       postgres: 'select * from "users" having "baz" between ? and ?',
@@ -1869,7 +1889,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having between", function() {
-    testsql(qb().select('*').from('users').havingBetween('baz', [5, 10]).orHavingBetween('baz', [20, 30]), {
+    testsql((knex) => knex.select('*').from('users').havingBetween('baz', [5, 10]).orHavingBetween('baz', [20, 30]), {
       mysql: 'select * from `users` having `baz` between ? and ? or `baz` between ? and ?',
       mssql: 'select * from [users] having [baz] between ? and ? or [baz] between ? and ?',
       postgres: 'select * from "users" having "baz" between ? and ? or "baz" between ? and ?',
@@ -1880,7 +1900,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having not between", function() {
-    testsql(qb().select('*').from('users').havingNotBetween('baz', [5, 10]), {
+    testsql((knex) => knex.select('*').from('users').havingNotBetween('baz', [5, 10]), {
       mysql: 'select * from `users` having `baz` not between ? and ?',
       mssql: 'select * from [users] having [baz] not between ? and ?',
       postgres: 'select * from "users" having "baz" not between ? and ?',
@@ -1891,7 +1911,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having not between", function() {
-    testsql(qb().select('*').from('users').havingNotBetween('baz', [5, 10]).orHavingNotBetween('baz', [20, 30]), {
+    testsql((knex) => knex.select('*').from('users').havingNotBetween('baz', [5, 10]).orHavingNotBetween('baz', [20, 30]), {
       mysql: 'select * from `users` having `baz` not between ? and ? or `baz` not between ? and ?',
       mssql: 'select * from [users] having [baz] not between ? and ? or [baz] not between ? and ?',
       postgres: 'select * from "users" having "baz" not between ? and ? or "baz" not between ? and ?',
@@ -1902,7 +1922,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having in", function() {
-    testsql(qb().select('*').from('users').havingIn('baz', [5, 10, 37]), {
+    testsql((knex) => knex.select('*').from('users').havingIn('baz', [5, 10, 37]), {
       mysql: 'select * from `users` having `baz` in (?, ?, ?)',
       mssql: 'select * from [users] having [baz] in (?, ?, ?)',
       postgres: 'select * from "users" having "baz" in (?, ?, ?)',
@@ -1913,7 +1933,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having in", function() {
-    testsql(qb().select('*').from('users').havingIn('baz', [5, 10, 37]).orHavingIn('foo', ['Batman', 'Joker']), {
+    testsql((knex) => knex.select('*').from('users').havingIn('baz', [5, 10, 37]).orHavingIn('foo', ['Batman', 'Joker']), {
       mysql: 'select * from `users` having `baz` in (?, ?, ?) or `foo` in (?, ?)',
       mssql: 'select * from [users] having [baz] in (?, ?, ?) or [foo] in (?, ?)',
       postgres: 'select * from "users" having "baz" in (?, ?, ?) or "foo" in (?, ?)',
@@ -1924,7 +1944,7 @@ describe("QueryBuilder", function() {
   });
 
   it("having not in", function() {
-    testsql(qb().select('*').from('users').havingNotIn('baz', [5, 10, 37]), {
+    testsql((knex) => knex.select('*').from('users').havingNotIn('baz', [5, 10, 37]), {
       mysql: 'select * from `users` having `baz` not in (?, ?, ?)',
       mssql: 'select * from [users] having [baz] not in (?, ?, ?)',
       postgres: 'select * from "users" having "baz" not in (?, ?, ?)',
@@ -1935,7 +1955,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or having not in", function() {
-    testsql(qb().select('*').from('users').havingNotIn('baz', [5, 10, 37]).orHavingNotIn('foo', ['Batman', 'Joker']), {
+    testsql((knex) => knex.select('*').from('users').havingNotIn('baz', [5, 10, 37]).orHavingNotIn('foo', ['Batman', 'Joker']), {
       mysql: 'select * from `users` having `baz` not in (?, ?, ?) or `foo` not in (?, ?)',
       mssql: 'select * from [users] having [baz] not in (?, ?, ?) or [foo] not in (?, ?)',
       postgres: 'select * from "users" having "baz" not in (?, ?, ?) or "foo" not in (?, ?)',
@@ -1946,7 +1966,7 @@ describe("QueryBuilder", function() {
   });
 
   it("limits", function() {
-    testsql(qb().select('*').from('users').limit(10), {
+    testsql((knex) => knex.select('*').from('users').limit(10), {
       mysql: {
         sql: 'select * from `users` limit ?',
         bindings: [10]
@@ -1975,7 +1995,7 @@ describe("QueryBuilder", function() {
   });
 
   it("can limit 0", function() {
-    testsql(qb().select('*').from('users').limit(0), {
+    testsql((knex) => knex.select('*').from('users').limit(0), {
       mysql: {
         sql: 'select * from `users` limit ?',
         bindings: [0]
@@ -2004,7 +2024,7 @@ describe("QueryBuilder", function() {
   });
 
   it("limits and offsets", function() {
-    testsql(qb().select('*').from('users').offset(5).limit(10), {
+    testsql((knex) => knex.select('*').from('users').offset(5).limit(10), {
       mysql: {
         sql: 'select * from `users` limit ? offset ?',
         bindings: [10, 5]
@@ -2033,7 +2053,7 @@ describe("QueryBuilder", function() {
   });
 
   it("limits and raw selects", function() {
-    testsql(qb().select(raw('name = ? as isJohn', ['john'])).from('users').limit(1), {
+    testsql((knex) => knex.select(raw('name = ? as isJohn', ['john'])).from('users').limit(1), {
       mysql: {
         sql: 'select name = ? as isJohn from `users` limit ?',
         bindings: ['john', 1]
@@ -2062,7 +2082,7 @@ describe("QueryBuilder", function() {
   });
 
   it("first", function() {
-    testsql(qb().first('*').from('users'), {
+    testsql((knex) => knex.first('*').from('users'), {
       mysql: {
         sql: 'select * from `users` limit ?',
         bindings: [1]
@@ -2091,7 +2111,7 @@ describe("QueryBuilder", function() {
   });
 
   it("offsets only", function() {
-    testsql(qb().select('*').from('users').offset(5), {
+    testsql((knex) => knex.select('*').from('users').offset(5), {
       mysql: {
         sql: 'select * from `users` limit 18446744073709551615 offset ?',
         bindings: [5]
@@ -2124,7 +2144,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where shortcut", function() {
-    testsql(qb().select('*').from('users').where('id', 1).orWhere('name', 'foo'), {
+    testsql((knex) => knex.select('*').from('users').where('id', 1).orWhere('name', 'foo'), {
       mysql: {
         sql: 'select * from `users` where `id` = ? or `name` = ?',
         bindings: [1, 'foo']
@@ -2145,7 +2165,7 @@ describe("QueryBuilder", function() {
   });
 
   it("nested wheres", function() {
-    testsql(qb().select('*').from('users').where('email', '=', 'foo').orWhere(function(qb) {
+    testsql((knex) => knex.select('*').from('users').where('email', '=', 'foo').orWhere(function(qb) {
       qb.where('name', '=', 'bar').where('age', '=', 25);
     }), {
       mysql: {
@@ -2169,8 +2189,8 @@ describe("QueryBuilder", function() {
 
 
   it("clear nested wheres", function() {
-    testsql(qb().select('*').from('users').where('email', '=', 'foo').orWhere(function(qb) {
-      qb.where('name', '=', 'bar').where('age', '=', 25).clearWhere();
+    testsql((knex) => knex.select('*').from('users').where('email', '=', 'foo').orWhere(function(qb) {
+      knex.where('name', '=', 'bar').where('age', '=', 25).clearWhere();
     }), {
       mysql: {
         sql: 'select * from `users` where `email` = ?',
@@ -2192,8 +2212,8 @@ describe("QueryBuilder", function() {
   });
 
   it("clear where and nested wheres", function() {
-    testsql(qb().select('*').from('users').where('email', '=', 'foo').orWhere(function(qb) {
-      qb.where('name', '=', 'bar').where('age', '=', 25);
+    testsql((knex) => knex.select('*').from('users').where('email', '=', 'foo').orWhere(function(qb) {
+      knex.where('name', '=', 'bar').where('age', '=', 25);
     }).clearWhere(), {
       mysql: {
         sql: 'select * from `users`'
@@ -2211,7 +2231,7 @@ describe("QueryBuilder", function() {
   });
 
   it("full sub selects", function() {
-    testsql(qb().select('*').from('users').where('email', '=', 'foo').orWhere('id', '=', function(qb) {
+    testsql((knex) => knex.select('*').from('users').where('email', '=', 'foo').orWhere('id', '=', function(qb) {
       qb.select(raw('max(id)')).from('users').where('email', '=', 'bar');
     }), {
       mysql: {
@@ -2234,7 +2254,7 @@ describe("QueryBuilder", function() {
   });
 
  it("clear nested selects", function() {
-    testsql(qb().select('email').from('users').where('email', '=', 'foo').orWhere('id', '=', function(qb) {
+    testsql((knex) => knex.select('email').from('users').where('email', '=', 'foo').orWhere('id', '=', function(qb) {
       qb.select(raw('max(id)')).from('users').where('email', '=', 'bar').clearSelect();
     }), {
       mysql: {
@@ -2257,7 +2277,7 @@ describe("QueryBuilder", function() {
   });
 
   it("clear non nested selects", function() {
-    testsql(qb().select('email').from('users').where('email', '=', 'foo').orWhere('id', '=', function(qb) {
+    testsql((knex) => knex.select('email').from('users').where('email', '=', 'foo').orWhere('id', '=', function(qb) {
       qb.select(raw('max(id)')).from('users').where('email', '=', 'bar');
     }).clearSelect(), {
       mysql: {
@@ -2280,7 +2300,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where exists", function() {
-    testsql(qb().select('*').from('orders').whereExists(function(qb) {
+    testsql((knex) => knex.select('*').from('orders').whereExists(function(qb) {
       qb.select('*').from('products').where('products.id', '=', raw('"orders"."id"'));
     }), {
       mysql: {
@@ -2303,7 +2323,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where exists with builder", function() {
-    testsql(qb().select('*').from('orders').whereExists(qb().select('*').from('products').whereRaw('products.id = orders.id')), {
+    testsql((knex) => knex.select('*').from('orders').whereExists(knex.select('*').from('products').whereRaw('products.id = orders.id')), {
       mysql: {
         sql: 'select * from `orders` where exists (select * from `products` where products.id = orders.id)',
         bindings: []
@@ -2324,7 +2344,7 @@ describe("QueryBuilder", function() {
   });
 
   it("where not exists", function() {
-    testsql(qb().select('*').from('orders').whereNotExists(function(qb) {
+    testsql((knex) => knex.select('*').from('orders').whereNotExists(function(qb) {
       qb.select('*').from('products').where('products.id', '=', raw('"orders"."id"'));
     }), {
       mysql: {
@@ -2347,7 +2367,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or where exists", function() {
-    testsql(qb().select('*').from('orders').where('id', '=', 1).orWhereExists(function(qb) {
+    testsql((knex) => knex.select('*').from('orders').where('id', '=', 1).orWhereExists(function(qb) {
       qb.select('*').from('products').where('products.id', '=', raw('"orders"."id"'));
     }), {
       mysql: {
@@ -2370,7 +2390,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or where not exists", function() {
-    testsql(qb().select('*').from('orders').where('id', '=', 1).orWhereNotExists(function(qb) {
+    testsql((knex) => knex.select('*').from('orders').where('id', '=', 1).orWhereNotExists(function(qb) {
       qb.select('*').from('products').where('products.id', '=', raw('"orders"."id"'));
     }), {
       mysql: {
@@ -2393,7 +2413,7 @@ describe("QueryBuilder", function() {
   });
 
   it("cross join", function() {
-    testsql(qb().select('*').from('users').crossJoin('contracts').crossJoin('photos'), {
+    testsql((knex) => knex.select('*').from('users').crossJoin('contracts').crossJoin('photos'), {
       mysql: {
         sql: 'select * from `users` cross join `contracts` cross join `photos`',
         bindings: []
@@ -2426,7 +2446,7 @@ describe("QueryBuilder", function() {
   });
 
   it("full outer join", function() {
-    testsql(qb().select('*').from('users').fullOuterJoin('contacts', 'users.id', '=', 'contacts.id'), {
+    testsql((knex) => knex.select('*').from('users').fullOuterJoin('contacts', 'users.id', '=', 'contacts.id'), {
       mssql: {
         sql: 'select * from [users] full outer join [contacts] on [users].[id] = [contacts].[id]',
         bindings: []
@@ -2451,7 +2471,7 @@ describe("QueryBuilder", function() {
   });
 
   it("cross join on", function() {
-    testsql(qb().select('*').from('users').crossJoin('contracts', 'users.contractId', 'contracts.id'), {
+    testsql((knex) => knex.select('*').from('users').crossJoin('contracts', 'users.contractId', 'contracts.id'), {
       mysql: {
         sql: 'select * from `users` cross join `contracts` on `users`.`contractId` = `contracts`.`id`',
         bindings: []
@@ -2464,7 +2484,7 @@ describe("QueryBuilder", function() {
   });
 
   it("basic joins", function() {
-    testsql(qb().select('*').from('users').join('contacts', 'users.id', '=', 'contacts.id').leftJoin('photos', 'users.id', '=', 'photos.id'), {
+    testsql((knex) => knex.select('*').from('users').join('contacts', 'users.id', '=', 'contacts.id').leftJoin('photos', 'users.id', '=', 'photos.id'), {
       mysql: {
         sql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` left join `photos` on `users`.`id` = `photos`.`id`',
         bindings: []
@@ -2485,7 +2505,7 @@ describe("QueryBuilder", function() {
   });
 
   it("right (outer) joins", function() {
-    testsql(qb().select('*').from('users').rightJoin('contacts', 'users.id', '=', 'contacts.id').rightOuterJoin('photos', 'users.id', '=', 'photos.id'), {
+    testsql((knex) => knex.select('*').from('users').rightJoin('contacts', 'users.id', '=', 'contacts.id').rightOuterJoin('photos', 'users.id', '=', 'photos.id'), {
       mssql: {
         sql: 'select * from [users] right join [contacts] on [users].[id] = [contacts].[id] right outer join [photos] on [users].[id] = [photos].[id]',
         bindings: []
@@ -2514,7 +2534,7 @@ describe("QueryBuilder", function() {
   });
 
   it("complex join", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').orOn('users.name', '=', 'contacts.name');
     }), {
       mysql: {
@@ -2537,7 +2557,7 @@ describe("QueryBuilder", function() {
   });
 
   it("complex join with nest conditional statements", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on(function(qb) {
         qb.on('users.id', '=', 'contacts.id')
         qb.orOn('users.name', '=', 'contacts.name');
@@ -2563,7 +2583,7 @@ describe("QueryBuilder", function() {
   });
 
   it("joins with raw", function() {
-    testsql(qb().select('*').from('users').join('contacts', 'users.id', raw(1)).leftJoin('photos', 'photos.title', '=', raw('?', ['My Photo'])), {
+    testsql((knex) => knex.select('*').from('users').join('contacts', 'users.id', raw(1)).leftJoin('photos', 'photos.title', '=', raw('?', ['My Photo'])), {
       mysql: {
         sql: 'select * from `users` inner join `contacts` on `users`.`id` = 1 left join `photos` on `photos`.`title` = ?',
         bindings: ['My Photo']
@@ -2584,7 +2604,7 @@ describe("QueryBuilder", function() {
   });
 
   it("joins with schema", function() {
-    testsql(qb().withSchema('myschema').select('*').from('users').join('contacts', 'users.id', '=', 'contacts.id').leftJoin('photos', 'users.id', '=', 'photos.id'), {
+    testsql((knex) => knex.withSchema('myschema').select('*').from('users').join('contacts', 'users.id', '=', 'contacts.id').leftJoin('photos', 'users.id', '=', 'photos.id'), {
       mysql: {
         sql: 'select * from `myschema`.`users` inner join `myschema`.`contacts` on `users`.`id` = `contacts`.`id` left join `myschema`.`photos` on `users`.`id` = `photos`.`id`',
         bindings: []
@@ -2605,7 +2625,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on null", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNull('contacts.address')
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`address` is null',
@@ -2618,7 +2638,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on null", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNull('contacts.address').orOnNull('contacts.phone')
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`address` is null or `contacts`.`phone` is null',
@@ -2631,7 +2651,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on not null", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotNull('contacts.address')
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`address` is not null',
@@ -2644,7 +2664,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on not null", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotNull('contacts.address').orOnNotNull('contacts.phone')
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`address` is not null or `contacts`.`phone` is not null',
@@ -2657,7 +2677,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on exists", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onExists(function(){this.select('*').from('foo')})
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and exists (select * from `foo`)',
@@ -2670,7 +2690,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on exists", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onExists(function(){this.select('*').from('foo')}).orOnExists(function(){this.select('*').from('bar')})
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and exists (select * from `foo`) or exists (select * from `bar`)',
@@ -2683,7 +2703,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on not exists", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotExists(function(){this.select('*').from('foo')})
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and not exists (select * from `foo`)',
@@ -2696,7 +2716,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on not exists", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotExists(function(){this.select('*').from('foo')}).orOnNotExists(function(){this.select('*').from('bar')})
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and not exists (select * from `foo`) or not exists (select * from `bar`)',
@@ -2709,7 +2729,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on between", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onBetween('contacts.id', [7, 15])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` between ? and ?',
@@ -2722,7 +2742,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on between", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onBetween('contacts.id', [7, 15]).orOnBetween('users.id', [9, 14])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` between ? and ? or `users`.`id` between ? and ?',
@@ -2735,7 +2755,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on not between", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotBetween('contacts.id', [7, 15])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` not between ? and ?',
@@ -2748,7 +2768,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on not between", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotBetween('contacts.id', [7, 15]).orOnNotBetween('users.id', [9, 14])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` not between ? and ? or `users`.`id` not between ? and ?',
@@ -2761,7 +2781,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on in", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onIn('contacts.id', [7, 15, 23, 41])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` in (?, ?, ?, ?)',
@@ -2774,7 +2794,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on in", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onIn('contacts.id', [7, 15, 23, 41]).orOnIn('users.id', [21, 37])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` in (?, ?, ?, ?) or `users`.`id` in (?, ?)',
@@ -2787,7 +2807,7 @@ describe("QueryBuilder", function() {
   });
 
   it("on not in", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotIn('contacts.id', [7, 15, 23, 41])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` not in (?, ?, ?, ?)',
@@ -2800,7 +2820,7 @@ describe("QueryBuilder", function() {
   });
 
   it("or on not in", function() {
-    testsql(qb().select('*').from('users').join('contacts', function(qb) {
+    testsql((knex) => knex.select('*').from('users').join('contacts', function(qb) {
       qb.on('users.id', '=', 'contacts.id').onNotIn('contacts.id', [7, 15, 23, 41]).orOnNotIn('users.id', [21, 37])
     }), {
       mysql: 'select * from `users` inner join `contacts` on `users`.`id` = `contacts`.`id` and `contacts`.`id` not in (?, ?, ?, ?) or `users`.`id` not in (?, ?)',
@@ -2813,7 +2833,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw expressions in select", function() {
-    testsql(qb().select(raw('substr(foo, 6)')).from('users'), {
+    testsql((knex) => knex.select(raw('substr(foo, 6)')).from('users'), {
       mysql: {
         sql: 'select substr(foo, 6) from `users`',
         bindings: []
@@ -2834,7 +2854,7 @@ describe("QueryBuilder", function() {
   });
 
   it("count", function() {
-    testsql(qb().from('users').count(), {
+    testsql((knex) => knex.from('users').count(), {
       mysql: {
         sql: 'select count(*) from `users`',
         bindings: []
@@ -2855,7 +2875,7 @@ describe("QueryBuilder", function() {
   });
 
   it("count distinct", function() {
-    testsql(qb().from('users').countDistinct(), {
+    testsql((knex) => knex.from('users').countDistinct(), {
       mysql: {
         sql: 'select count(distinct *) from `users`',
         bindings: []
@@ -2876,7 +2896,7 @@ describe("QueryBuilder", function() {
   });
 
   it("count with alias", function() {
-    testsql(qb().from('users').count('* as all'), {
+    testsql((knex) => knex.from('users').count('* as all'), {
       mysql: {
         sql: 'select count(*) as `all` from `users`',
         bindings: []
@@ -2905,7 +2925,7 @@ describe("QueryBuilder", function() {
   });
 
   it("count distinct with alias", function() {
-    testsql(qb().from('users').countDistinct('* as all'), {
+    testsql((knex) => knex.from('users').countDistinct('* as all'), {
       mysql: {
         sql: 'select count(distinct *) as `all` from `users`',
         bindings: []
@@ -2934,7 +2954,7 @@ describe("QueryBuilder", function() {
   });
 
   it("count with raw values", function() {
-    testsql(qb().from('users').count(raw('??', 'name')), {
+    testsql((knex) => knex.from('users').count(raw('??', 'name')), {
       mysql: {
         sql: 'select count(`name`) from `users`',
         bindings: []
@@ -2951,7 +2971,7 @@ describe("QueryBuilder", function() {
   });
 
   it("count distinct with raw values", function() {
-    testsql(qb().from('users').countDistinct(raw('??', 'name')), {
+    testsql((knex) => knex.from('users').countDistinct(raw('??', 'name')), {
       mysql: {
         sql: 'select count(distinct `name`) from `users`',
         bindings: []
@@ -2968,7 +2988,7 @@ describe("QueryBuilder", function() {
   });
 
   it("max", function() {
-    testsql(qb().from('users').max('id'), {
+    testsql((knex) => knex.from('users').max('id'), {
       mysql: {
         sql: 'select max(`id`) from `users`',
         bindings: []
@@ -2989,7 +3009,7 @@ describe("QueryBuilder", function() {
   });
 
   it("max with raw values", function() {
-    testsql(qb().from('users').max(raw('??', ['name'])), {
+    testsql((knex) => knex.from('users').max(raw('??', ['name'])), {
       mysql: {
         sql: 'select max(`name`) from `users`',
         bindings: []
@@ -3006,7 +3026,7 @@ describe("QueryBuilder", function() {
   });
 
   it("min", function() {
-    testsql(qb().from('users').max('id'), {
+    testsql((knex) => knex.from('users').max('id'), {
       mysql: {
         sql: 'select max(`id`) from `users`',
         bindings: []
@@ -3027,7 +3047,7 @@ describe("QueryBuilder", function() {
   });
 
   it("min with raw values", function() {
-    testsql(qb().from('users').min(raw('??', ['name'])), {
+    testsql((knex) => knex.from('users').min(raw('??', ['name'])), {
       mysql: {
         sql: 'select min(`name`) from `users`',
         bindings: []
@@ -3044,7 +3064,7 @@ describe("QueryBuilder", function() {
   });
 
   it("sum", function() {
-    testsql(qb().from('users').sum('id'), {
+    testsql((knex) => knex.from('users').sum('id'), {
       mysql: {
         sql: 'select sum(`id`) from `users`',
         bindings: []
@@ -3065,7 +3085,7 @@ describe("QueryBuilder", function() {
   });
 
   it("sum with raw values", function() {
-    testsql(qb().from('users').sum(raw('??', ['name'])), {
+    testsql((knex) => knex.from('users').sum(raw('??', ['name'])), {
       mysql: {
         sql: 'select sum(`name`) from `users`',
         bindings: []
@@ -3082,7 +3102,7 @@ describe("QueryBuilder", function() {
   });
 
   it("sum distinct", function() {
-    testsql(qb().from('users').sumDistinct('id'), {
+    testsql((knex) => knex.from('users').sumDistinct('id'), {
       mysql: {
         sql: 'select sum(distinct `id`) from `users`',
         bindings: []
@@ -3103,7 +3123,7 @@ describe("QueryBuilder", function() {
   });
 
   it("sum distinct with raw values", function() {
-    testsql(qb().from('users').sumDistinct(raw('??', ['name'])), {
+    testsql((knex) => knex.from('users').sumDistinct(raw('??', ['name'])), {
       mysql: {
         sql: 'select sum(distinct `name`) from `users`',
         bindings: []
@@ -3120,7 +3140,7 @@ describe("QueryBuilder", function() {
   });
 
   it("avg", function() {
-    testsql(qb().from('users').avg('id'), {
+    testsql((knex) => knex.from('users').avg('id'), {
       mysql: {
         sql: 'select avg(`id`) from `users`',
         bindings: []
@@ -3137,7 +3157,7 @@ describe("QueryBuilder", function() {
   });
 
   it("avg with raw values", function() {
-    testsql(qb().from('users').avg(raw('??', ['name'])), {
+    testsql((knex) => knex.from('users').avg(raw('??', ['name'])), {
       mysql: {
         sql: 'select avg(`name`) from `users`',
         bindings: []
@@ -3154,7 +3174,7 @@ describe("QueryBuilder", function() {
   });
 
   it("avg distinct with raw values", function() {
-    testsql(qb().from('users').avgDistinct(raw('??', ['name'])), {
+    testsql((knex) => knex.from('users').avgDistinct(raw('??', ['name'])), {
       mysql: {
         sql: 'select avg(distinct `name`) from `users`',
         bindings: []
@@ -3171,7 +3191,7 @@ describe("QueryBuilder", function() {
   });
 
   it("insert method", function() {
-    testsql(qb().into('users').insert({'email': 'foo'}), {
+    testsql((knex) => knex.into('users').insert({'email': 'foo'}), {
       mysql: {
         sql: 'insert into `users` (`email`) values (?)',
         bindings: ['foo']
@@ -3192,7 +3212,7 @@ describe("QueryBuilder", function() {
   });
 
   it("multiple inserts", function() {
-    testsql(qb().from('users').insert([{email: 'foo', name: 'taylor'}, {email: 'bar', name: 'dayle'}]), {
+    testsql((knex) => knex.from('users').insert([{email: 'foo', name: 'taylor'}, {email: 'bar', name: 'dayle'}]), {
       mysql: {
         sql: 'insert into `users` (`email`, `name`) values (?, ?), (?, ?)',
         bindings: ['foo', 'taylor', 'bar', 'dayle']
@@ -3225,7 +3245,7 @@ describe("QueryBuilder", function() {
   });
 
   it("multiple inserts with partly undefined keys client with configuration nullAsDefault: true", function() {
-    testquery(qb().from('users').insert([{email: 'foo', name: 'taylor'}, {name: 'dayle'}]), {
+    testquery((knex) => knex.from('users').insert([{email: 'foo', name: 'taylor'}, {name: 'dayle'}]), {
       mysql: "insert into `users` (`email`, `name`) values ('foo', 'taylor'), (NULL, 'dayle')",
       sqlite3: 'insert into `users` (`email`, `name`) select \'foo\' as `email`, \'taylor\' as `name` union all select NULL as `email`, \'dayle\' as `name`',
       oracle: 'begin execute immediate \'insert into "users" ("email", "name") values (:1, :2)\' using \'foo\', \'taylor\'; execute immediate \'insert into "users" ("email", "name") values (:1, :2)\' using NULL, \'dayle\';end;',
@@ -3233,11 +3253,11 @@ describe("QueryBuilder", function() {
       oracledb: 'begin execute immediate \'insert into "users" ("email", "name") values (:1, :2)\' using \'foo\', \'taylor\'; execute immediate \'insert into "users" ("email", "name") values (:1, :2)\' using NULL, \'dayle\';end;',
       postgres: 'insert into "users" ("email", "name") values (\'foo\', \'taylor\'), (NULL, \'dayle\')',
       redshift: 'insert into "users" ("email", "name") values (\'foo\', \'taylor\'), (NULL, \'dayle\')',
-    }, clientsWithNullAsDefault);
+    }, contextsWithNullAsDefault);
   });
 
   it("multiple inserts with partly undefined keys", function() {
-    testquery(qb().from('users').insert([{email: 'foo', name: 'taylor'}, {name: 'dayle'}]), {
+    testquery((knex) => knex.from('users').insert([{email: 'foo', name: 'taylor'}, {name: 'dayle'}]), {
       mysql: "insert into `users` (`email`, `name`) values ('foo', 'taylor'), (DEFAULT, 'dayle')",
       oracle: 'begin execute immediate \'insert into "users" ("email", "name") values (:1, :2)\' using \'foo\', \'taylor\'; execute immediate \'insert into "users" ("email", "name") values (DEFAULT, :1)\' using \'dayle\';end;',
       mssql: "insert into [users] ([email], [name]) values ('foo', 'taylor'), (DEFAULT, 'dayle')",
@@ -3249,7 +3269,7 @@ describe("QueryBuilder", function() {
 
   it("multiple inserts with partly undefined keys throw error with sqlite", function() {
     expect(function () {
-      testquery(qb().from('users').insert([{email: 'foo', name: 'taylor'}, {name: 'dayle'}]), {
+      testquery((knex) => knex.from('users').insert([{email: 'foo', name: 'taylor'}, {name: 'dayle'}]), {
         sqlite3: ""
       });
     }).to.throw(TypeError)
@@ -3258,7 +3278,7 @@ describe("QueryBuilder", function() {
   it("multiple inserts with returning", function() {
     // returning only supported directly by postgres and with workaround with oracle
     // other databases implicitly return the inserted id
-    testsql(qb().from('users').insert([{email: 'foo', name: 'taylor'}, {email: 'bar', name: 'dayle'}], 'id'), {
+    testsql((knex) => knex.from('users').insert([{email: 'foo', name: 'taylor'}, {email: 'bar', name: 'dayle'}], 'id'), {
       mysql: {
         sql: 'insert into `users` (`email`, `name`) values (?, ?), (?, ?)',
         bindings: ['foo', 'taylor', 'bar', 'dayle']
@@ -3306,7 +3326,7 @@ describe("QueryBuilder", function() {
   });
 
   it("multiple inserts with multiple returning", function() {
-    testsql(qb().from('users').insert([{email: 'foo', name: 'taylor'}, {email: 'bar', name: 'dayle'}], ['id', 'name']), {
+    testsql((knex) => knex.from('users').insert([{email: 'foo', name: 'taylor'}, {email: 'bar', name: 'dayle'}], ['id', 'name']), {
       mysql: {
         sql: 'insert into `users` (`email`, `name`) values (?, ?), (?, ?)',
         bindings: ['foo', 'taylor', 'bar', 'dayle']
@@ -3357,7 +3377,7 @@ describe("QueryBuilder", function() {
   });
 
   it("insert method respects raw bindings", function() {
-    testsql(qb().insert({'email': raw('CURRENT TIMESTAMP')}).into('users'), {
+    testsql((knex) => knex.insert({'email': raw('CURRENT TIMESTAMP')}).into('users'), {
       mysql: {
         sql: 'insert into `users` (`email`) values (CURRENT TIMESTAMP)',
         bindings: []
@@ -3383,10 +3403,10 @@ describe("QueryBuilder", function() {
     //This is done because sqlite3 does not support valueForUndefined, and can't manipulate testsql to use 'clientsWithUseNullForUndefined'.
     //But we still want to make sure that when `useNullAsDefault` is explicitly defined, that the query still works as expected. (Bindings being undefined)
     //It's reset at the end of the test.
-    var previousValuesForUndefinedSqlite3 = clients.sqlite3.valueForUndefined;
-    clients.sqlite3.valueForUndefined = null;
+    var previousValuesForUndefinedSqlite3 = contexts.sqlite3.client.valueForUndefined;
+    contexts.sqlite3.client.valueForUndefined = null;
 
-    testsql(qb().insert(data).into('table'), {
+    testsql((knex) => knex.insert(data).into('table'), {
       mysql: {
         sql: 'insert into `table` (`a`, `b`, `c`) values (?, DEFAULT, DEFAULT), (DEFAULT, ?, DEFAULT), (?, DEFAULT, ?)',
         bindings: [1, 2, 2, 3]
@@ -3416,11 +3436,11 @@ describe("QueryBuilder", function() {
         bindings: [1, 2, 2, 3]
       },
     });
-    clients.sqlite3.valueForUndefined = previousValuesForUndefinedSqlite3;
+    contexts.sqlite3.client.valueForUndefined = previousValuesForUndefinedSqlite3;
   });
 
   it("empty insert should be a noop", function() {
-    testsql(qb().into('users').insert(), {
+    testsql((knex) => knex.into('users').insert(), {
       mysql: {
         sql: '',
         bindings: []
@@ -3449,7 +3469,7 @@ describe("QueryBuilder", function() {
   });
 
   it("insert with empty array should be a noop", function() {
-    testsql(qb().into('users').insert([]), {
+    testsql((knex) => knex.into('users').insert([]), {
       mysql: {
         sql: '',
         bindings: []
@@ -3478,7 +3498,7 @@ describe("QueryBuilder", function() {
   });
 
   it("insert with array with empty object and returning", function() {
-    testsql(qb().into('users').insert([{}], 'id'), {
+    testsql((knex) => knex.into('users').insert([{}], 'id'), {
       mysql: {
         sql: 'insert into `users` () values ()',
         bindings: []
@@ -3517,7 +3537,7 @@ describe("QueryBuilder", function() {
   });
 
   // it("insert with array with null value and returning is a noop", function() {
-  //   testsql(qb().into('users').insert([null], 'id'), {
+  //   testsql((knex) => knex.into('users').insert([null], 'id'), {
   //     mysql: {
   //       sql: '',
   //       bindings: []
@@ -3551,14 +3571,14 @@ describe("QueryBuilder", function() {
   //       bindings: []
   //     },
   //     redshift: {
-  //       sql: '', 
-  //       bindings: [] 
+  //       sql: '',
+  //       bindings: []
   //     },
   //   });
   // });
 
   // it("insert with array of multiple null values is a noop", function() {
-  //   testsql(qb().into('users').insert([null, null]), {
+  //   testsql((knex) => knex.into('users').insert([null, null]), {
   //     mysql: {
   //       sql: '',
   //       bindings: []
@@ -3576,30 +3596,30 @@ describe("QueryBuilder", function() {
   //       bindings: []
   //     },
   //     postgres: {
-  //       sql: "", 
-  //       bindings: [] 
+  //       sql: "",
+  //       bindings: []
   //     },
   //     redshift: {
-  //       sql: "", 
-  //       bindings: [] 
+  //       sql: "",
+  //       bindings: []
   //     },
   //     mssql: {
   //       sql: '',
   //       bindings: []
   //     },
   //     postgres: {
-  //       sql: '', 
-  //       bindings: [] 
+  //       sql: '',
+  //       bindings: []
   //     },
   //     redshift: {
-   //       sql: '', 
+   //       sql: '',
    //       bindings: []
    //     },
   //   });
   // });
 
   it("update method", function() {
-    testsql(qb().update({'email': 'foo', 'name': 'bar'}).table('users').where('id', '=', 1), {
+    testsql((knex) => knex.update({'email': 'foo', 'name': 'bar'}).table('users').where('id', '=', 1), {
       mysql: {
         sql: 'update `users` set `email` = ?, `name` = ? where `id` = ?',
         bindings: ['foo', 'bar', 1]
@@ -3620,7 +3640,7 @@ describe("QueryBuilder", function() {
   });
 
   it("update only method", function() {
-    testsql(qb().update({'email': 'foo', 'name': 'bar'}).table('users', { only: true }).where('id', '=', 1), {
+    testsql((knex) => knex.update({'email': 'foo', 'name': 'bar'}).table('users', { only: true }).where('id', '=', 1), {
       postgres: {
         sql: 'update only "users" set "email" = ?, "name" = ? where "id" = ?',
         bindings: ['foo', 'bar', 1]
@@ -3629,7 +3649,7 @@ describe("QueryBuilder", function() {
   });
 
   it("should not update columns undefined values", function() {
-    testsql(qb().update({'email': 'foo', 'name': undefined}).table('users').where('id', '=', 1), {
+    testsql((knex) => knex.update({'email': 'foo', 'name': undefined}).table('users').where('id', '=', 1), {
       mysql: {
         sql: 'update `users` set `email` = ? where `id` = ?',
         bindings: ['foo', 1]
@@ -3646,7 +3666,7 @@ describe("QueryBuilder", function() {
   });
 
   it("should allow for 'null' updates", function() {
-    testsql(qb().update({email: null, 'name': 'bar'}).table('users').where('id', 1), {
+    testsql((knex) => knex.update({email: null, 'name': 'bar'}).table('users').where('id', 1), {
       mysql: {
         sql: 'update `users` set `email` = ?, `name` = ? where `id` = ?',
         bindings: [null, 'bar', 1]
@@ -3668,7 +3688,7 @@ describe("QueryBuilder", function() {
 
   it("order by, limit", function() {
     // update with limit works only with mysql and derrivates
-    testsql(qb().from('users').where('id', '=', 1).orderBy('foo', 'desc').limit(5).update({email: 'foo', name: 'bar'}), {
+    testsql((knex) => knex.from('users').where('id', '=', 1).orderBy('foo', 'desc').limit(5).update({email: 'foo', name: 'bar'}), {
       mysql: {
         sql: 'update `users` set `email` = ?, `name` = ? where `id` = ? order by `foo` desc limit ?',
         bindings: ['foo', 'bar', 1, 5]
@@ -3689,7 +3709,7 @@ describe("QueryBuilder", function() {
   });
 
   it("update method with joins mysql", function() {
-    testsql(qb().from('users').join('orders', 'users.id', 'orders.user_id').where('users.id', '=', 1).update({'email': 'foo', 'name': 'bar'}), {
+    testsql((knex) => knex.from('users').join('orders', 'users.id', 'orders.user_id').where('users.id', '=', 1).update({'email': 'foo', 'name': 'bar'}), {
       mysql: {
         sql: 'update `users` inner join `orders` on `users`.`id` = `orders`.`user_id` set `email` = ?, `name` = ? where `users`.`id` = ?',
         bindings: ['foo', 'bar', 1]
@@ -3711,7 +3731,7 @@ describe("QueryBuilder", function() {
 
   it("update method with limit mysql", function() {
     // limit works only with mysql or derrivates
-    testsql(qb().from('users').where('users.id', '=', 1).update({'email': 'foo', 'name': 'bar'}).limit(1), {
+    testsql((knex) => knex.from('users').where('users.id', '=', 1).update({'email': 'foo', 'name': 'bar'}).limit(1), {
       mysql: {
         sql: 'update `users` set `email` = ?, `name` = ? where `users`.`id` = ? limit ?',
         bindings: ['foo', 'bar', 1, 1]
@@ -3732,7 +3752,7 @@ describe("QueryBuilder", function() {
   });
 
   it("update method without joins on postgres", function() {
-    testsql(qb().from('users').where('id', '=', 1).update({email: 'foo', name: 'bar'}), {
+    testsql((knex) => knex.from('users').where('id', '=', 1).update({email: 'foo', name: 'bar'}), {
       mysql: {
         sql: 'update `users` set `email` = ?, `name` = ? where `id` = ?',
         bindings: ['foo', 'bar', 1]
@@ -3753,7 +3773,7 @@ describe("QueryBuilder", function() {
   });
 
   it("update method with returning on oracle", function() {
-    testsql(qb().from('users').where('id', '=', 1).update({email: 'foo', name: 'bar'}, '*'), {
+    testsql((knex) => knex.from('users').where('id', '=', 1).update({email: 'foo', name: 'bar'}, '*'), {
       oracle: {
         sql: 'update "users" set "email" = ?, "name" = ? where "id" = ? returning ROWID into ?',
         bindings: function(bindings) {
@@ -3775,7 +3795,7 @@ describe("QueryBuilder", function() {
   // });
 
   it("update method respects raw", function() {
-    testsql(qb().from('users').where('id', '=', 1).update({email: raw('foo'), name: 'bar'}), {
+    testsql((knex) => knex.from('users').where('id', '=', 1).update({email: raw('foo'), name: 'bar'}), {
       mysql: {
         sql: 'update `users` set `email` = foo, `name` = ? where `id` = ?',
         bindings: ['bar', 1]
@@ -3796,7 +3816,7 @@ describe("QueryBuilder", function() {
   });
 
   it("delete method", function() {
-    testsql(qb().from('users').where('email', '=', 'foo').delete(), {
+    testsql((knex) => knex.from('users').where('email', '=', 'foo').delete(), {
       mysql: {
         sql: 'delete from `users` where `email` = ?',
         bindings: ['foo']
@@ -3817,7 +3837,7 @@ describe("QueryBuilder", function() {
   });
 
   it("delete only method", function() {
-    testsql(qb().from('users', { only: true }).where('email', '=', 'foo').delete(), {
+    testsql((knex) => knex.from('users', { only: true }).where('email', '=', 'foo').delete(), {
       postgres: {
         sql: 'delete from only "users" where "email" = ?',
         bindings: ['foo']
@@ -3826,7 +3846,7 @@ describe("QueryBuilder", function() {
   });
 
   it("truncate method", function() {
-    testsql(qb().table('users').truncate(), {
+    testsql((knex) => knex.table('users').truncate(), {
       mysql: {
         sql: 'truncate `users`',
         bindings: []
@@ -3862,7 +3882,7 @@ describe("QueryBuilder", function() {
   });
 
   it("insert get id", function() {
-    testsql(qb().from('users').insert({email: 'foo'}, 'id'), {
+    testsql((knex) => knex.from('users').insert({email: 'foo'}, 'id'), {
       mysql: {
         sql: 'insert into `users` (`email`) values (?)',
         bindings: ['foo']
@@ -3899,7 +3919,7 @@ describe("QueryBuilder", function() {
   });
 
   it("wrapping", function() {
-    testsql(qb().select('*').from('users'), {
+    testsql((knex) => knex.select('*').from('users'), {
       mysql: 'select * from `users`',
       mssql: 'select * from [users]',
       postgres: 'select * from "users"'
@@ -3907,7 +3927,7 @@ describe("QueryBuilder", function() {
   });
 
   it("order by desc", function() {
-    testsql(qb().select('*').from('users').orderBy('email', 'desc'), {
+    testsql((knex) => knex.select('*').from('users').orderBy('email', 'desc'), {
       mysql: 'select * from `users` order by `email` desc',
       mssql: 'select * from [users] order by [email] desc',
       postgres: 'select * from "users" order by "email" desc'
@@ -3915,7 +3935,7 @@ describe("QueryBuilder", function() {
   });
 
   it("providing null or false as second parameter builds correctly", function() {
-    testsql(qb().select('*').from('users').where('foo', null), {
+    testsql((knex) => knex.select('*').from('users').where('foo', null), {
       mysql: 'select * from `users` where `foo` is null',
       mssql: 'select * from [users] where [foo] is null',
       postgres: 'select * from "users" where "foo" is null'
@@ -3923,13 +3943,13 @@ describe("QueryBuilder", function() {
   });
 
   // it("lock for update", function (){
-  //   testsql(tb().select('*').from('foo').where('bar', '=', 'baz').forUpdate(), {
+  //   testsql(() => tb().select('*').from('foo').where('bar', '=', 'baz').forUpdate(), {
   //     mysql: {
   //       sql: 'select * from `foo` where `bar` = ? for update',
   //       bindings: ['baz']
   //     },
   //     postgres: {
-  //       sql: 'select * from "foo" where "bar" = ? for update', 
+  //       sql: 'select * from "foo" where "bar" = ? for update',
   //       bindings: ['baz']
   //     },
   //     redshift: {
@@ -3949,7 +3969,7 @@ describe("QueryBuilder", function() {
   //       bindings: ['baz']
   //     },
   //     postgres: {
-  //       sql: 'select * from "foo" where "bar" = ?', 
+  //       sql: 'select * from "foo" where "bar" = ?',
   //       bindings: ['baz']
   //     },
   //     redshift: {
@@ -3960,13 +3980,13 @@ describe("QueryBuilder", function() {
   // });
 
   // it("lock in share mode", function() {
-  //   testsql(qb().transacting({}).select('*').from('foo').where('bar', '=', 'baz').forShare(), {
+  //   testsql((knex) => knex.transacting({}).select('*').from('foo').where('bar', '=', 'baz').forShare(), {
   //     mysql: {
   //       sql: 'select * from `foo` where `bar` = ? lock in share mode',
   //       bindings: ['baz']
   //     },
   //     postgres: {
-  //       sql: "select * from \"foo\" where \"bar\" = ? for share", 
+  //       sql: "select * from \"foo\" where \"bar\" = ? for share",
   //       bindings: ['baz']
   //     },
   //     redshift: {
@@ -3978,7 +3998,7 @@ describe("QueryBuilder", function() {
   //       bindings: ['baz']
   //     },
   //     postgres: {
-  //       sql: 'select * from "foo" where "bar" = ?', 
+  //       sql: 'select * from "foo" where "bar" = ?',
   //       bindings: ['baz']
   //     },
   //     redshift: {
@@ -3989,7 +4009,7 @@ describe("QueryBuilder", function() {
   // });
 
   it("should allow lock (such as forUpdate) outside of a transaction", function() {
-    testsql(qb().select('*').from('foo').where('bar', '=', 'baz').forUpdate(), {
+    testsql((knex) => knex.select('*').from('foo').where('bar', '=', 'baz').forUpdate(), {
       mysql: {
         sql: 'select * from `foo` where `bar` = ? for update',
         bindings: ['baz']
@@ -4006,9 +4026,9 @@ describe("QueryBuilder", function() {
   });
 
   it('allows insert values of sub-select, #121', function() {
-    testsql(qb().table('entries').insert({
+    testsql((knex) => knex.table('entries').insert({
       secret: 123,
-      sequence: qb().count('*').from('entries').where('secret', 123)
+      sequence: knex.count('*').from('entries').where('secret', 123)
     }), {
       mysql: {
         sql: 'insert into `entries` (`secret`, `sequence`) values (?, (select count(*) from `entries` where `secret` = ?))',
@@ -4030,7 +4050,7 @@ describe("QueryBuilder", function() {
   });
 
   it('allows left outer join with raw values', function() {
-    testsql(qb().select('*').from('student').leftOuterJoin('student_languages', function() {
+    testsql((knex) => knex.select('*').from('student').leftOuterJoin('student_languages', function() {
       this.on('student.id', 'student_languages.student_id').andOn('student_languages.code', raw('?', 'en_US'));
     }), {
       mysql: {
@@ -4053,7 +4073,7 @@ describe("QueryBuilder", function() {
   });
 
   it('should not break with null call #182', function() {
-    testsql(qb().from('test').limit(null).offset(null), {
+    testsql((knex) => knex.from('test').limit(null).offset(null), {
       mysql: {
         sql: 'select * from `test`',
         bindings: []
@@ -4074,12 +4094,12 @@ describe("QueryBuilder", function() {
   });
 
   it('allows passing builder into where clause, #162', function() {
-    var chain = qb().from('chapter').select('id').where('book', 1);
-    var page = qb().from('page').select('id').whereIn('chapter_id', chain);
-    var word = qb().from('word').select('id').whereIn('page_id', page);
-    var three = chain.clone().del();
-    var two = page.clone().del();
-    var one = word.clone().del();
+    var getChain = (knex) => knex.from('chapter').select('id').where('book', 1);
+    var getPage = (knex) => knex.from('page').select('id').whereIn('chapter_id', getChain(knex));
+    var getWord = (knex) => knex.from('word').select('id').whereIn('page_id', getPage(knex));
+    var three = (knex) => getChain(knex).clone().del();
+    var two = (knex) => getPage(knex).clone().del();
+    var one = (knex) => getWord(knex).clone().del();
 
     testsql(one, {
       mysql: {
@@ -4142,8 +4162,8 @@ describe("QueryBuilder", function() {
   it('allows specifying the columns and the query for insert, #211', function() {
     var id = 1;
     var email = 'foo@bar.com';
-    testsql(qb().into(raw('recipients (recipient_id, email)')).insert(
-      qb().select(raw('?, ?', [id, email])).whereNotExists(function() {
+    testsql((knex) => knex.into(raw('recipients (recipient_id, email)')).insert(
+      knex.select(raw('?, ?', [id, email])).whereNotExists(function() {
         this.select(1).from('recipients').where('recipient_id', id);
       })), {
       mysql: {
@@ -4167,7 +4187,7 @@ describe("QueryBuilder", function() {
 
   it('does an update with join on mysql, #191', function() {
     var setObj = {'tblPerson.City': 'Boonesville'};
-    var query = qb().table('tblPerson').update(setObj)
+    var query = (knex) => knex.table('tblPerson').update(setObj)
       .join('tblPersonData', 'tblPersonData.PersonId', '=', 'tblPerson.PersonId')
       .where('tblPersonData.DataId', 1)
       .where('tblPerson.PersonId', 5 );
@@ -4193,10 +4213,10 @@ describe("QueryBuilder", function() {
   });
 
   it('does crazy advanced inserts with clever raw use, #211', function() {
-    var q1 = qb().select(raw("'user'"), raw("'user@foo.com'")).whereNotExists(function() {
+    var q1 = (knex) => knex.select(raw("'user'"), raw("'user@foo.com'")).whereNotExists(function() {
       this.select(1).from('recipients').where('recipient_id', 1);
     })
-    var q2 = qb().table('recipients').insert(raw('(recipient_id, email) ?', [q1]));
+    var q2 = (knex) => knex.table('recipients').insert(raw('(recipient_id, email) ?', [q1(knex)]));
 
     testsql(q2, {
       // mysql: {
@@ -4219,7 +4239,7 @@ describe("QueryBuilder", function() {
   });
 
   it('supports capitalized operators', function() {
-    testsql(qb().select('*').from('users').where('name', 'LIKE', '%test%'), {
+    testsql((knex) => knex.select('*').from('users').where('name', 'LIKE', '%test%'), {
       mysql: {
         sql: 'select * from `users` where `name` like ?',
         bindings: ['%test%']
@@ -4240,7 +4260,7 @@ describe("QueryBuilder", function() {
   });
 
   it('supports POSIX regex operators in Postgres', function() {
-    testsql(qb().select('*').from('users').where('name', '~', '.*test.*'), {
+    testsql((knex) => knex.select('*').from('users').where('name', '~', '.*test.*'), {
       postgres: {
         sql: 'select * from "users" where "name" ~ ?',
         bindings: ['.*test.*']
@@ -4253,7 +4273,7 @@ describe("QueryBuilder", function() {
   });
 
   it('supports NOT ILIKE operator in Postgres', function() {
-    testsql(qb().select('*').from('users').where('name', 'not ilike', '%jeff%'), {
+    testsql((knex) => knex.select('*').from('users').where('name', 'not ilike', '%jeff%'), {
       postgres: {
         sql: 'select * from "users" where "name" not ilike ?',
         bindings: ['%jeff%']
@@ -4282,7 +4302,7 @@ describe("QueryBuilder", function() {
 
   it("#287 - wraps correctly for arrays", function() {
     // arrays only work for postgres
-    testsql(qb().select('*').from('value').join('table', 'table.array_column[1]', '=', raw('?', 1)), {
+    testsql((knex) => knex.select('*').from('value').join('table', 'table.array_column[1]', '=', raw('?', 1)), {
       mysql: {
         sql: 'select * from `value` inner join `table` on `table`.`array_column[1]` = ?',
         bindings: [1]
@@ -4303,11 +4323,11 @@ describe("QueryBuilder", function() {
   });
 
   it('allows wrap on raw to wrap in parens and alias', function() {
-    testsql(qb().select(
+    testsql((knex) => knex.select(
       'e.lastname',
       'e.salary',
       raw(
-        qb().select('avg(salary)').from('employee').whereRaw('dept_no = e.dept_no')
+        knex.select('avg(salary)').from('employee').whereRaw('dept_no = e.dept_no')
       ).wrap('(', ') avg_sal_dept')
     ).from('employee as e')
     .where('dept_no', '=', 'e.dept_no'), {
@@ -4339,10 +4359,10 @@ describe("QueryBuilder", function() {
   });
 
   it('allows select as syntax', function() {
-    testsql(qb().select(
+    testsql((knex) => knex.select(
       'e.lastname',
       'e.salary',
-      qb().select('avg(salary)').from('employee').whereRaw('dept_no = e.dept_no').as('avg_sal_dept')
+      knex.select('avg(salary)').from('employee').whereRaw('dept_no = e.dept_no').as('avg_sal_dept')
     ).from('employee as e')
     .where('dept_no', '=', 'e.dept_no'), {
       mysql: {
@@ -4375,7 +4395,7 @@ describe("QueryBuilder", function() {
   });
 
   it('allows function for subselect column', function() {
-    testsql(qb().select(
+    testsql((knex) => knex.select(
       'e.lastname',
       'e.salary'
     ).select(function() {
@@ -4412,10 +4432,10 @@ describe("QueryBuilder", function() {
   });
 
   it('allows first as syntax', function() {
-    testsql(qb().select(
+    testsql((knex) => knex.select(
       'e.lastname',
       'e.salary',
-      qb().first('salary').from('employee').whereRaw('dept_no = e.dept_no').orderBy('salary', 'desc').as('top_dept_salary')
+      knex.first('salary').from('employee').whereRaw('dept_no = e.dept_no').orderBy('salary', 'desc').as('top_dept_salary')
     ).from('employee as e')
     .where('dept_no', '=', 'e.dept_no'), {
       mysql: {
@@ -4438,7 +4458,7 @@ describe("QueryBuilder", function() {
   });
 
   it('supports arbitrarily nested raws', function() {
-    var chain = qb().select('*').from('places')
+    var chain = (knex) => knex.select('*').from('places')
       .where(raw('ST_DWithin((places.address).xy, ?, ?) AND ST_Distance((places.address).xy, ?) > ? AND ?', [
         raw('ST_SetSRID(?,?)', [
           raw('ST_MakePoint(?,?)', [-10,10]),
@@ -4474,7 +4494,7 @@ describe("QueryBuilder", function() {
   });
 
   it('has joinRaw for arbitrary join clauses', function() {
-    testsql(qb().select('*').from('accounts').joinRaw('natural full join table1').where('id', 1), {
+    testsql((knex) => knex.select('*').from('accounts').joinRaw('natural full join table1').where('id', 1), {
       mysql: {
         sql: 'select * from `accounts` natural full join table1 where `id` = ?',
         bindings: [1]
@@ -4495,7 +4515,7 @@ describe("QueryBuilder", function() {
   });
 
   it('allows a raw query in the second param', function() {
-    testsql(qb().select('*').from('accounts').innerJoin(
+    testsql((knex) => knex.select('*').from('accounts').innerJoin(
       'table1', raw('ST_Contains(buildings_pluto.geom, ST_Centroid(buildings_building.geom))')
     ), {
       mysql: {
@@ -4514,7 +4534,7 @@ describe("QueryBuilder", function() {
   });
 
   it('allows join "using"', function() {
-    testsql(qb().select('*').from('accounts').innerJoin('table1', function() {
+    testsql((knex) => knex.select('*').from('accounts').innerJoin('table1', function() {
       this.using('id');
     }), {
       mysql: {
@@ -4534,7 +4554,7 @@ describe("QueryBuilder", function() {
   });
 
   it('allows sub-query function on insert, #427', function() {
-    testsql(qb().into('votes').insert(function() {
+    testsql((knex) => knex.into('votes').insert(function() {
       this.select('*').from('votes').where('id', 99);
     }), {
       mysql: {
@@ -4557,7 +4577,7 @@ describe("QueryBuilder", function() {
   });
 
   it('allows sub-query chain on insert, #427', function() {
-    testsql(qb().into('votes').insert(qb().select('*').from('votes').where('id', 99)), {
+    testsql((knex) => knex.into('votes').insert(knex.select('*').from('votes').where('id', 99)), {
       mysql: {
         sql: 'insert into `votes` select * from `votes` where `id` = ?',
         bindings: [99]
@@ -4586,7 +4606,7 @@ describe("QueryBuilder", function() {
   });
 
   it('allows for raw values in join, #441', function() {
-    testsql(qb()
+    testsql((knex) => knex
       .select('A.nid AS id')
       .from(raw('nidmap2 AS A'))
       .innerJoin(
@@ -4624,9 +4644,9 @@ describe("QueryBuilder", function() {
   });
 
   it('allows insert values of sub-select without raw, #627', function() {
-    testsql(qb().table('entries').insert({
+    testsql((knex) => knex.table('entries').insert({
       secret: 123,
-      sequence: qb().count('*').from('entries').where('secret', 123)
+      sequence: knex.count('*').from('entries').where('secret', 123)
     }), {
       mysql: {
         sql: 'insert into `entries` (`secret`, `sequence`) values (?, (select count(*) from `entries` where `secret` = ?))',
@@ -4649,7 +4669,7 @@ describe("QueryBuilder", function() {
 
   it('correctly orders parameters when selecting from subqueries, #704', function() {
     var subquery = qb().select(raw('? as f', ['inner raw select'])).as('g');
-    testsql(qb()
+    testsql((knex) => knex
       .select(raw('?', ['outer raw select']), 'g.f')
       .from(subquery)
       .where('g.secret', 123),
@@ -4682,7 +4702,7 @@ describe("QueryBuilder", function() {
   });
 
   it('escapes queries properly, #737', function() {
-    testsql(qb()
+    testsql((knex) => knex
       .select('id","name', 'id`name')
       .from('test`'),
       {
@@ -4706,7 +4726,7 @@ describe("QueryBuilder", function() {
   });
 
   it('has a fromJS method for json construction of queries', function() {
-    testsql(qb().fromJS({
+    testsql((knex) => knex.fromJS({
       select: '*',
       from: 'accounts',
       where: {
@@ -4745,7 +4765,7 @@ describe("QueryBuilder", function() {
         .select('bars.*')
     };
 
-    testsql(qb().select('foo_id').from('foos').modify(withBars, 'foos', 'bar_id'), {
+    testsql((knex) => knex.select('foo_id').from('foos').modify(withBars, 'foos', 'bar_id'), {
       mysql: {
         sql: 'select `foo_id`, `bars`.* from `foos` left join `bars` on `foos`.`bar_id` = `bars`.`id`'
       },
@@ -4762,7 +4782,7 @@ describe("QueryBuilder", function() {
   })
 
   it('Allows for empty where #749', function() {
-    testsql(qb().select('foo').from('tbl').where(function() {}), {
+    testsql((knex) => knex.select('foo').from('tbl').where(function() {}), {
       mysql:   'select `foo` from `tbl`',
       mssql:   'select [foo] from [tbl]',
       postgres: 'select "foo" from "tbl"'
@@ -4770,26 +4790,26 @@ describe("QueryBuilder", function() {
   })
 
   it("escapes single quotes properly", function() {
-    testquery(qb().select('*').from('users').where('last_name', 'O\'Brien'), {
+    testquery((knex) => knex.select('*').from('users').where('last_name', 'O\'Brien'), {
       mysql: 'select * from `users` where `last_name` = \'O\\\'Brien\'',
       postgres: 'select * from "users" where "last_name" = \'O\'\'Brien\''
     });
   });
 
   it("escapes double quotes property", function(){
-    testquery(qb().select('*').from('players').where('name', 'Gerald "Ice" Williams'), {
+    testquery((knex) => knex.select('*').from('players').where('name', 'Gerald "Ice" Williams'), {
       postgres: 'select * from "players" where "name" = \'Gerald "Ice" Williams\''
     });
   });
 
   it('escapes backslashes properly', function() {
-    testquery(qb().select('*').from('files').where('path', 'C:\\test.txt'), {
+    testquery((knex) => knex.select('*').from('files').where('path', 'C:\\test.txt'), {
       postgres: 'select * from "files" where "path" = E\'C:\\\\test.txt\''
     });
   });
 
   it("allows join without operator and with value 0 #953", function() {
-    testsql(qb().select('*').from('users').join('photos', 'photos.id', 0), {
+    testsql((knex) => knex.select('*').from('users').join('photos', 'photos.id', 0), {
       mysql: {
         sql: 'select * from `users` inner join `photos` on `photos`.`id` = 0'
       },
@@ -4806,7 +4826,7 @@ describe("QueryBuilder", function() {
   });
 
   it("allows join with operator and with value 0 #953", function() {
-    testsql(qb().select('*').from('users').join('photos', 'photos.id', '>', 0), {
+    testsql((knex) => knex.select('*').from('users').join('photos', 'photos.id', '>', 0), {
       mysql: {
         sql: 'select * from `users` inner join `photos` on `photos`.`id` > 0'
       },
@@ -4824,7 +4844,7 @@ describe("QueryBuilder", function() {
 
   it("where with date object", function () {
     var date = new Date();
-    testsql(qb().select('*').from('users').where("birthday", ">=", date), {
+    testsql((knex) => knex.select('*').from('users').where("birthday", ">=", date), {
       mysql: {
         sql: 'select * from `users` where `birthday` >= ?',
         bindings: [date]
@@ -4846,7 +4866,7 @@ describe("QueryBuilder", function() {
 
   it("raw where with date object", function() {
     var date = new Date();
-    testsql(qb().select('*').from('users').whereRaw("birthday >= ?", date), {
+    testsql((knex) => knex.select('*').from('users').whereRaw("birthday >= ?", date), {
       mysql: {
         sql: 'select * from `users` where birthday >= ?',
         bindings: [date]
@@ -4889,26 +4909,26 @@ describe("QueryBuilder", function() {
     };
 
     //String
-    testsql(qb().select('*').from('users').where(raw('username = ?', 'knex')), expected('username', ['knex']));
-    testsql(qb().select('*').from('users').where(raw('username = ?', ['knex'])), expected('username', ['knex']));
+    testsql((knex) => knex.select('*').from('users').where(raw('username = ?', 'knex')), expected('username', ['knex']));
+    testsql((knex) => knex.select('*').from('users').where(raw('username = ?', ['knex'])), expected('username', ['knex']));
 
     //Number
-    testsql(qb().select('*').from('users').where(raw('isadmin = ?', 0)), expected('isadmin', [0]));
-    testsql(qb().select('*').from('users').where(raw('isadmin = ?', [1])), expected('isadmin', [1]));
+    testsql((knex) => knex.select('*').from('users').where(raw('isadmin = ?', 0)), expected('isadmin', [0]));
+    testsql((knex) => knex.select('*').from('users').where(raw('isadmin = ?', [1])), expected('isadmin', [1]));
 
     //Date
     var date = new Date(2016, 0, 5, 10, 19, 30, 599);
     var sqlUpdTime = '2016-01-05 10:19:30.599';
-    testsql(qb().select('*').from('users').where(raw('updtime = ?', date)), expected('updtime', [date]));
-    testsql(qb().select('*').from('users').where(raw('updtime = ?', [date])), expected('updtime', [date]));
-    testquery(qb().select('*').from('users').where(raw('updtime = ?', date)), {
+    testsql((knex) => knex.select('*').from('users').where(raw('updtime = ?', date)), expected('updtime', [date]));
+    testsql((knex) => knex.select('*').from('users').where(raw('updtime = ?', [date])), expected('updtime', [date]));
+    testquery((knex) => knex.select('*').from('users').where(raw('updtime = ?', date)), {
       mysql: 'select * from `users` where updtime = \'' + sqlUpdTime + '\'',
       postgres: 'select * from "users" where updtime = \'' + sqlUpdTime + '\''
     });
   });
 
   it("#1118 orWhere({..}) generates or (and - and - and)", function() {
-    testsql(qb().select('*').from('users').where('id', '=', 1).orWhere({
+    testsql((knex) => knex.select('*').from('users').where('id', '=', 1).orWhere({
       email: 'foo',
       id: 2
     }), {
@@ -4932,7 +4952,7 @@ describe("QueryBuilder", function() {
   });
 
   it('#1228 Named bindings', function() {
-    testsql(qb().select('*').from('users').whereIn('id', raw('select (:test)', {test: [1,2,3]})), {
+    testsql((knex) => knex.select('*').from('users').whereIn('id', raw('select (:test)', {test: [1,2,3]})), {
       mysql: {
         sql: 'select * from `users` where `id` in (select (?))',
         bindings: [[1,2,3]]
@@ -4959,9 +4979,9 @@ describe("QueryBuilder", function() {
     };
     //Had to do it this way as the 'raw' statement's .toQuery is called before testsql, meaning mssql and other dialects would always get the output of qb() default client
     //as MySQL, which means testing the query per dialect won't work. [users].[name] would be `users`.`name` for mssql which is incorrect.
-    var mssql = clients.mssql;
-    var mysql = clients.mysql;
-    var sqlite3 = clients.sqlite3;
+    var mssql = contexts.mssql;
+    var mysql = contexts.mysql;
+    var sqlite3 = contexts.sqlite3;
 
     var mssqlQb = mssql.queryBuilder().select('*').from('users').where(mssql.raw(':name: = :thisGuy or :name: = :otherGuy', namedBindings)).toSQL();
     var mysqlQb = mysql.queryBuilder().select('*').from('users').where(mysql.raw(':name: = :thisGuy or :name: = :otherGuy', namedBindings)).toSQL();
@@ -4978,7 +4998,7 @@ describe("QueryBuilder", function() {
   });
 
   it('#1268 - valueForUndefined should be in toSQL(QueryCompiler)', function() {
-    testsql(qb().insert([{id: void 0, name: 'test', occupation: void 0}, {id: 1, name: void 0, occupation: 'none'}]).into('users'), {
+    testsql((knex) => knex.insert([{id: void 0, name: 'test', occupation: void 0}, {id: 1, name: void 0, occupation: 'none'}]).into('users'), {
       mysql: {
         sql: 'insert into `users` (`id`, `name`, `occupation`) values (DEFAULT, ?, DEFAULT), (?, DEFAULT, ?)',
         bindings: ['test', 1, 'none']
@@ -5002,7 +5022,7 @@ describe("QueryBuilder", function() {
     });
 
     expect(function() {
-      clients.sqlite3.queryBuilder().insert([{id: void 0}]).into('users').toString();
+      contexts.sqlite3.queryBuilder().insert([{id: void 0}]).into('users').toString();
     })
     .to
     .throw(TypeError);
@@ -5017,7 +5037,7 @@ describe("QueryBuilder", function() {
 
 
   it('#1402 - raw should take "not" into consideration in querybuilder', function() {
-    testsql(qb().from('testtable').whereNot(raw('is_active')), {
+    testsql((knex) => knex.from('testtable').whereNot(raw('is_active')), {
       mysql: {
         sql: 'select * from `testtable` where not is_active',
         bindings: []
@@ -5043,45 +5063,28 @@ describe("QueryBuilder", function() {
 
 
   it('Any undefined binding in a SELECT query should throw an error', function() {
-    var qbuilders = [
-      qb().from('accounts').where({Login: void 0}).select(),
-      qb().from('accounts').where('Login', void 0).select(),
-      qb().from('accounts').where('Login', '>=', void 0).select(),
-      qb().from('accounts').whereIn('Login', ['test', 'val', void 0]).select(),
-      qb().from('accounts').where({Login: ['1', '2', '3', void 0]}),
-      qb().from('accounts').where({Login: {Test: '123', Value: void 0}}),
-      qb().from('accounts').where({Login: ['1', ['2', [void 0]]]}),
-      qb().from('accounts').update({test: '1', test2: void 0}).where({abc: 'test', cba: void 0})
+    var builders = [
+      (knex) => knex.from('accounts').where({Login: void 0}).select(),
+      (knex) => knex.from('accounts').where('Login', void 0).select(),
+      (knex) => knex.from('accounts').where('Login', '>=', void 0).select(),
+      (knex) => knex.from('accounts').whereIn('Login', ['test', 'val', void 0]).select(),
+      (knex) => knex.from('accounts').where({Login: ['1', '2', '3', void 0]}),
+      (knex) => knex.from('accounts').where({Login: {Test: '123', Value: void 0}}),
+      (knex) => knex.from('accounts').where({Login: ['1', ['2', [void 0]]]}),
+      (knex) => knex.from('accounts').update({test: '1', test2: void 0}).where({abc: 'test', cba: void 0})
     ];
-    qbuilders.forEach(function(qbuilder) {
-      try {
-        //Must be present, but makes no difference since it throws.
-        testsql(qbuilder, {
-          mysql: {
-            sql: '',
-            bindings: []
-          },
-          oracle: {
-            sql: '',
-            bindings: []
-          },
-          mssql: {
-            sql: '',
-            bindings: []
-          },
-          postgres: {
-            sql: '',
-            bindings: []
-          },
-          redshift: {
-            sql: '',
-            bindings: []
-          },
-        });
-        expect(true).to.equal(false, 'Expected to throw error in compilation about undefined bindings.');
-      } catch(error) {
-        expect(error.message).to.contain('Undefined binding(s) detected when compiling ' + qbuilder._method.toUpperCase() + ' query:'); //This test is not for asserting correct queries
-      }
+    builders.forEach(function(buildFunction) {
+      testsql((knex) => {
+        const queryBuilder = buildFunction(knex);
+        const method = queryBuilder.__state.method.toUpperCase();
+
+        try {
+          queryBuilder.toString();
+          expect(true).to.equal(false, 'Expected to throw error in compilation about undefined bindings.');
+        } catch(error) {
+          expect(error.message).to.contain('Undefined binding(s) detected when compiling ' + method + ' query:'); //This test is not for asserting correct queries
+        }
+      }, {});
     });
   });
 
@@ -5144,7 +5147,7 @@ describe("QueryBuilder", function() {
   });
 
   it("query \\\\? escaping", function() {
-    testquery(qb().select('*').from('users').where('id', '=', 1).whereRaw('?? \\? ?', ['jsonColumn', 'jsonKey?']), {
+    testquery((knex) => knex.select('*').from('users').where('id', '=', 1).whereRaw('?? \\? ?', ['jsonColumn', 'jsonKey?']), {
       mysql: 'select * from `users` where `id` = 1 and `jsonColumn` ? \'jsonKey?\'',
       postgres: 'select * from "users" where "id" = 1 and "jsonColumn" ? \'jsonKey?\''
     });
@@ -5152,19 +5155,19 @@ describe("QueryBuilder", function() {
 
   it("operator transformation", function() {
     // part of common base code, no need to test on every dialect
-    testsql(qb().select('*').from('users').where('id', '?', 1), {
+    testsql((knex) => knex.select('*').from('users').where('id', '?', 1), {
       postgres: 'select * from "users" where "id" \\? ?'
     });
-    testsql(qb().select('*').from('users').where('id', '?|', 1), {
+    testsql((knex) => knex.select('*').from('users').where('id', '?|', 1), {
       postgres: 'select * from "users" where "id" \\?| ?'
     });
-    testsql(qb().select('*').from('users').where('id', '?&', 1), {
+    testsql((knex) => knex.select('*').from('users').where('id', '?&', 1), {
       postgres: 'select * from "users" where "id" \\?& ?'
     });
   });
 
   it("wrapped 'with' clause select", function() {
-    testsql(qb().with('withClause', function() {
+    testsql((knex) => knex.with('withClause', function() {
       this.select('foo').from('users');
     }).select('*').from('withClause'), {
       mssql: 'with [withClause] as (select [foo] from [users]) select * from [withClause]',
@@ -5177,7 +5180,7 @@ describe("QueryBuilder", function() {
   });
 
   it("wrapped 'with' clause insert", function() {
-    testsql(qb().with('withClause', function() {
+    testsql((knex) => knex.with('withClause', function() {
       this.select('foo').from('users');
     }).insert(raw('select * from "withClause"')).into('users'), {
       mssql: 'with [withClause] as (select [foo] from [users]) insert into [users] select * from "withClause"',
@@ -5187,7 +5190,7 @@ describe("QueryBuilder", function() {
   });
 
   it("wrapped 'with' clause multiple insert", function() {
-    testsql(qb().with('withClause', function() {
+    testsql((knex) => knex.with('withClause', function() {
       this.select('foo').from('users').where({name: 'bob'});
     }).insert([{email: 'thisMail', name: 'sam'}, {email: 'thatMail', name: 'jack'}]).into('users'), {
       mssql: {
@@ -5210,7 +5213,7 @@ describe("QueryBuilder", function() {
   });
 
   it("wrapped 'with' clause update", function() {
-    testsql(qb().with('withClause', function() {
+    testsql((knex) => knex.with('withClause', function() {
       this.select('foo').from('users');
     }).update({foo: 'updatedFoo'}).where('email', '=', 'foo').from('users'), {
       mssql: 'with [withClause] as (select [foo] from [users]) update [users] set [foo] = ? where [email] = ?;select @@rowcount',
@@ -5220,7 +5223,7 @@ describe("QueryBuilder", function() {
   });
 
   it("wrapped 'with' clause delete", function() {
-    testsql(qb().with('withClause', function() {
+    testsql((knex) => knex.with('withClause', function() {
       this.select('email').from('users');
     }).del().where('foo', '=', 'updatedFoo').from('users'), {
       mssql: 'with [withClause] as (select [email] from [users]) delete from [users] where [foo] = ?;select @@rowcount',
@@ -5230,7 +5233,7 @@ describe("QueryBuilder", function() {
   });
 
   it("raw 'with' clause", function() {
-    testsql(qb().with('withRawClause', raw('select "foo" as "baz" from "users"')).select('*').from('withRawClause'), {
+    testsql((knex) => knex.with('withRawClause', raw('select "foo" as "baz" from "users"')).select('*').from('withRawClause'), {
       mssql: 'with [withRawClause] as (select "foo" as "baz" from "users") select * from [withRawClause]',
       sqlite3: 'with `withRawClause` as (select "foo" as "baz" from "users") select * from `withRawClause`',
       postgres: 'with "withRawClause" as (select "foo" as "baz" from "users") select * from "withRawClause"',
@@ -5241,7 +5244,7 @@ describe("QueryBuilder", function() {
   });
 
   it("chained wrapped 'with' clause", function() {
-    testsql(qb().with('firstWithClause', function() {
+    testsql((knex) => knex.with('firstWithClause', function() {
       this.select('foo').from('users');
     }).with('secondWithClause', function() {
       this.select('bar').from('users');
@@ -5256,7 +5259,7 @@ describe("QueryBuilder", function() {
   });
 
   it("nested 'with' clause", function() {
-    testsql(qb().with('withClause', function() {
+    testsql((knex) => knex.with('withClause', function() {
       this.with('withSubClause', function() {
         this.select('foo').as('baz').from('users');
       }).select('*').from('withSubClause');
@@ -5271,7 +5274,7 @@ describe("QueryBuilder", function() {
   });
 
   it("nested 'with' clause with bindings", function() {
-    testsql(qb().with('withClause', function() {
+    testsql((knex) => knex.with('withClause', function() {
       this.with('withSubClause', raw('select "foo" as "baz" from "users" where "baz" > ? and "baz" < ?',
       [1, 20])).select('*').from('withSubClause');
     }).select('*').from('withClause').where({id: 10}), {
@@ -5303,7 +5306,7 @@ describe("QueryBuilder", function() {
   });
 
   it("should return dialect specific sql and bindings with  toSQL().toNative()", function() {
-    testNativeSql(qb().from('table').where('isIt', true), {
+    testNativeSql((knex) => knex.from('table').where('isIt', true), {
       mssql: {
         sql: 'select * from [table] where [isIt] = @p0',
         bindings: [true]
@@ -5332,7 +5335,7 @@ describe("QueryBuilder", function() {
   });
 
   it("nested and chained wrapped 'with' clause", function() {
-    testsql(qb().with('firstWithClause', function() {
+    testsql((knex) => knex.with('firstWithClause', function() {
       this.with('firstWithSubClause', function() {
         this.select('foo').as('foz').from('users');
       }).select('*').from('firstWithSubClause');
@@ -5352,50 +5355,50 @@ describe("QueryBuilder", function() {
 
   describe("#2263, update / delete queries in with syntax", () => {
     it("with update query passed as raw", () => {
-      testquery(qb().with('update1', raw('??', [qb().from('accounts').update({ name: 'foo' })])).from('accounts'), {
+      testquery((knex) => knex.with('update1', raw('??', [knex.from('accounts').update({ name: 'foo' })])).from('accounts'), {
         postgres: `with "update1" as (update "accounts" set "name" = 'foo') select * from "accounts"`,
       });
     });
 
     it("with update query passed as query builder", () => {
-      testquery(qb().with('update1', qb().from('accounts').update({ name: 'foo' })).from('accounts'), {
+      testquery((knex) => knex.with('update1', knex.from('accounts').update({ name: 'foo' })).from('accounts'), {
        postgres: `with "update1" as (update "accounts" set "name" = 'foo') select * from "accounts"`,
       });
     });
 
     it("with update query passed as callback", () => {
-      testquery(qb().with('update1', builder => builder.from('accounts').update({ name: 'foo' })).from('accounts'), {
+      testquery((knex) => knex.with('update1', builder => builder.from('accounts').update({ name: 'foo' })).from('accounts'), {
         postgres: `with "update1" as (update "accounts" set "name" = 'foo') select * from "accounts"`,
       });
     });
 
     it("with delete query passed as raw", () => {
-      testquery(qb().with('delete1', raw('??', [qb().delete().from('accounts').where('id', 1)])).from('accounts'), {
+      testquery((knex) => knex.with('delete1', raw('??', [knex.delete().from('accounts').where('id', 1)])).from('accounts'), {
         postgres: `with "delete1" as (delete from "accounts" where "id" = 1) select * from "accounts"`,
       });
     });
 
     it("with delete query passed as query builder", () => {
-      testquery(qb().with('delete1', builder => builder.delete().from('accounts').where('id', 1)).from('accounts'), {
+      testquery((knex) => knex.with('delete1', builder => builder.delete().from('accounts').where('id', 1)).from('accounts'), {
         postgres: `with "delete1" as (delete from "accounts" where "id" = 1) select * from "accounts"`,
       });
     });
 
     it("with delete query passed as callback", () => {
-      testquery(qb().with('delete1', qb().delete().from('accounts').where('id', 1)).from('accounts'), {
+      testquery((knex) => knex.with('delete1', knex.delete().from('accounts').where('id', 1)).from('accounts'), {
         postgres: `with "delete1" as (delete from "accounts" where "id" = 1) select * from "accounts"`,
       });
     });
   });
 
   it('#1710, properly escapes arrays in where clauses in postgresql', function() {
-    testquery(qb().select('*').from('sometable').where('array_field', '&&', [7]), {
+    testquery((knex) => knex.select('*').from('sometable').where('array_field', '&&', [7]), {
       postgres: "select * from \"sometable\" where \"array_field\" && '{7}'"
     });
-    testquery(qb().select('*').from('sometable').where('array_field', '&&', ['abc', 'def']), {
+    testquery((knex) => knex.select('*').from('sometable').where('array_field', '&&', ['abc', 'def']), {
       postgres: "select * from \"sometable\" where \"array_field\" && '{\"abc\",\"def\"}'"
     });
-    testquery(qb().select('*').from('sometable').where('array_field', '&&', ['abc', 'def', ['g', 2]]), {
+    testquery((knex) => knex.select('*').from('sometable').where('array_field', '&&', ['abc', 'def', ['g', 2]]), {
       postgres: "select * from \"sometable\" where \"array_field\" && '{\"abc\",\"def\",{\"g\",2}}'"
     });
   })
@@ -5405,7 +5408,7 @@ describe("QueryBuilder", function() {
     TestObject.prototype.toPostgres = function() {
       return 'foobar'
     }
-    testquery(qb().table('sometable').insert({ id: new TestObject() }), {
+    testquery((knex) => knex.table('sometable').insert({ id: new TestObject() }), {
       postgres: "insert into \"sometable\" (\"id\") values ('foobar')"
     });
   })

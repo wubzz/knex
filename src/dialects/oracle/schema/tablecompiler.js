@@ -84,7 +84,7 @@ assign(TableCompiler_Oracle.prototype, {
   },
 
   _indexCommand(type, tableName, columns) {
-    return this.formatter.wrap(utils.generateCombinedName(type, tableName, columns));
+    return this.formatter.wrap(utils.generateCombinedName(this, type, tableName, columns));
   },
 
   primary(columns, constraintName) {

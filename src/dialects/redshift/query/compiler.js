@@ -51,17 +51,17 @@ assign(QueryCompiler_Redshift.prototype, {
   // simple: if trying to return, warn
   _slightReturn(){
     if (this.single.isReturning) {
-      helpers.warn('insert/update/delete returning is not supported by redshift dialect');
+      this.log.warn('insert/update/delete returning is not supported by redshift dialect');
     }
   },
 
   forUpdate() {
-    helpers.warn('table lock is not supported by redshift dialect');
+    this.log.warn('table lock is not supported by redshift dialect');
     return '';
   },
 
   forShare() {
-    helpers.warn('lock for share is not supported by redshift dialect');
+    this.log.warn('lock for share is not supported by redshift dialect');
     return '';
   },
 

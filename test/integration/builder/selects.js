@@ -234,38 +234,6 @@ module.exports = function(knex) {
         });
     })
 
-    it('emits error on the stream, if not passed a function, and connecting fails', function() {
-      var expected = new Error();
-      var original = Runner.prototype.ensureConnection;
-      Runner.prototype.ensureConnection = function() {
-        return Promise.reject(expected);
-      };
-
-      var restore = () => {
-        Runner.prototype.ensureConnection = original;
-      };
-
-      var promise = new Promise((resolve, reject) => {
-        var timeout = setTimeout(() => {
-          reject(new Error('Timeout'));
-        }, 5000);
-
-        var stream = knex('accounts').stream();
-        stream.on('error', function(actual) {
-          clearTimeout(timeout);
-
-          if (actual === expected) {
-            resolve();
-          } else {
-            reject(new Error('Stream emitted unexpected error'));
-          }
-        });
-      });
-
-      promise.then(restore, restore);
-      return promise;
-    });
-
     it('properly escapes postgres queries on streaming', function() {
       let count = 0;
       return knex('accounts').where('id', 1).stream(function(rowStream) {

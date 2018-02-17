@@ -82,7 +82,6 @@ AlterMethods.drop = function() {
 // occur when changing data types.
 AlterMethods.alterType = function(type) {
   this._statements.push({
-    grouping: 'alterType',
     value: type
   });
 

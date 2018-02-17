@@ -4,7 +4,6 @@
 import inherits from 'inherits';
 import Client_MySQL from '../mysql';
 import { assign } from 'lodash'
-import Transaction from './transaction';
 
 // Always initialize with the "QueryBuilder" and "QueryCompiler"
 // objects, which extend the base 'lib/query/builder' and
@@ -19,10 +18,6 @@ assign(Client_MySQL2.prototype, {
   // The "dialect", for reference elsewhere.
   driverName: 'mysql2',
 
-  transaction() {
-    return new Transaction(this, ...arguments)
-  },
-
   _driver() {
     return require('mysql2')
   },
@@ -32,6 +27,10 @@ assign(Client_MySQL2.prototype, {
       return false
     }
     return true
+  },
+
+  _isTransactionError(err) {
+    return err.code === 'ERR_SP_DOES_NOT_EXIST'
   }
 })
 

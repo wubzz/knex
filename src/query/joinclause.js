@@ -1,6 +1,7 @@
 
 import { assign } from 'lodash'
 import assert from 'assert';
+import invariant from 'invariant';
 
 // JoinClause
 // -------
@@ -16,9 +17,6 @@ function JoinClause(table, type, schema) {
 }
 
 assign(JoinClause.prototype, {
-
-  grouping: 'join',
-
   // Adds an "on" clause to the current join object.
   on(first, operator, second) {
     if (typeof first === 'function') {
@@ -59,19 +57,14 @@ assign(JoinClause.prototype, {
     return this.clauses.push({type: 'onUsing', column, bool: this._bool()});
   },
 
-  /*// Adds an "and on" clause to the current join object.
-  andOn() {
-    return this.on.apply(this, arguments);
-  },*/
-
   // Adds an "or on" clause to the current join object.
   orOn(first, operator, second) {
     return this._bool('or').on.apply(this, arguments);
   },
 
   onBetween(column, values) {
-    assert(Array.isArray(values), 'The second argument to onBetween must be an array.')
-    assert(values.length === 2, 'You must specify 2 values for the onBetween clause')
+    invariant(Array.isArray(values), 'The second argument to onBetween must be an array.')
+    invariant(values.length === 2, 'You must specify 2 values for the onBetween clause')
     this.clauses.push({
       type: 'onBetween',
       column,

@@ -3,6 +3,7 @@
 'use strict';
 
 require('source-map-support').install();
+require('babel-register')
 
 global.sinon = require("sinon");
 
@@ -10,6 +11,10 @@ var chai = global.chai = require("chai");
 
 chai.use(require("sinon-chai"));
 chai.should();
+
+process.on('unhandledRejection', function (err) {
+  console.log('Unhandled: \n' + err.stack)
+})
 
 var Promise   = global.testPromise = require('bluebird');
 global.expect = chai.expect;

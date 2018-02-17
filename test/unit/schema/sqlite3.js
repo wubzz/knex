@@ -6,7 +6,8 @@ var tableSql;
 
 var sinon = require('sinon');
 var SQLite3_Client = require('../../../lib/dialects/sqlite3');
-var client         = new SQLite3_Client({})
+var KnexContext = require('../../../lib/classes/KnexContext')
+var client         = new KnexContext(new SQLite3_Client({}))
 var SQLite3_DDL    = require('../../../lib/dialects/sqlite3/schema/ddl')
 
 var _              = require('lodash');
@@ -476,8 +477,8 @@ describe("SQLite SchemaBuilder", function() {
 
     before(function () {
       spy = sinon.spy();
-      originalWrapIdentifier = client.config.wrapIdentifier;
-      client.config.wrapIdentifier = function (value, wrap, queryContext) {
+      originalWrapIdentifier = client.client.config.wrapIdentifier;
+      client.client.config.wrapIdentifier = function (value, wrap, queryContext) {
         spy(value, queryContext);
         return wrap(value);
       };
@@ -488,7 +489,7 @@ describe("SQLite SchemaBuilder", function() {
     });
 
     after(function () {
-      client.config.wrapIdentifier = originalWrapIdentifier;
+      client.client.config.wrapIdentifier = originalWrapIdentifier;
     });
 
     it('SchemaCompiler passes queryContext to wrapIdentifier via TableCompiler', function () {

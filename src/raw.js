@@ -19,20 +19,27 @@ const fakeClient = {
   }
 }
 
-function Raw(client = fakeClient) {
-  this.client = client
+const fakeContext = {
+  client: fakeClient,
+};
 
-  this.sql = ''
-  this.bindings = []
+class Raw extends EventEmitter {
+  constructor(context = fakeContext) {
+    super();
 
-  // Todo: Deprecate
-  this._wrappedBefore = undefined
-  this._wrappedAfter = undefined
-  this._debug = client && client.config && client.config.debug
-}
-inherits(Raw, EventEmitter)
+    const {client} = context;
 
-assign(Raw.prototype, {
+    this.__context = context;
+    this.client = client;
+
+    this.sql = '';
+    this.bindings = [];
+
+    // Todo: Deprecate
+    this._wrappedBefore = undefined
+    this._wrappedAfter = undefined
+    this._debug = client && client.config && client.config.debug
+  }
 
   set(sql, bindings) {
     this.sql = sql
@@ -42,7 +49,7 @@ assign(Raw.prototype, {
     ) ? bindings : [bindings]
 
     return this
-  },
+  }
 
   timeout(ms, {cancel} = {}) {
     if (isNumber(ms) && ms > 0) {
@@ -53,19 +60,19 @@ assign(Raw.prototype, {
       }
     }
     return this;
-  },
+  }
 
   // Wraps the current sql with `before` and `after`.
   wrap(before, after) {
     this._wrappedBefore = before
     this._wrappedAfter = after
     return this
-  },
+  }
 
   // Calls `toString` on the Knex object.
   toString() {
     return this.toQuery()
-  },
+  }
 
   // Returns the raw sql for the query.
   toSQL(method, tz) {
@@ -113,8 +120,7 @@ assign(Raw.prototype, {
 
     return obj
   }
-
-})
+}
 
 function replaceRawArrBindings(raw, formatter) {
   const expectedBindings = raw.bindings.length

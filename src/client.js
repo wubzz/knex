@@ -59,7 +59,7 @@ inherits(Client, EventEmitter)
 assign(Client.prototype, {
 
   transaction: {
-    begin: 'BEGIn',
+    begin: 'BEGIN',
     savepoint: 'SAVEPOINT %s',
     commit: 'COMMIT',
     releaseSavepoint: 'RELEASE SAVEPOINT %s',
@@ -71,18 +71,11 @@ assign(Client.prototype, {
     return new Formatter(this, builder)
   },
 
-  format(fmt) {
-    let i = 1;
-    const args = arguments;
-    return fmt.replace(/%([%sILQ])/g, (_, type) => {
-      if ('%' == type) return '%';
-      const arg = args[i++];
-      switch (type) {
-        case 's': return String(arg == null ? '' : arg)
-        case 'I': return this.ident(arg)
-        case 'L': return this.literal(arg)
-      }
-    });
+  format(string, ...args) {
+    //For example 'SAVEPOINT %s' -> 'SAVEPOINT txId'
+    while(string.indexOf('%s') !== -1 && args.length) {
+      string = string.replace('%s', args.shift());
+    }
   },
 
   queryBuilder(context) {

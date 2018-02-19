@@ -115,7 +115,7 @@ export default class KnexContext extends EventEmitter {
         this.__connection = this.__parentContext.getConnection()
       }
       return this.__connection.then(conn => {
-        return this.executeHooks('beforeFirst').then(() => conn)
+        return this.executeHooks('beforeFirstQuery').then(() => conn)
       })
     }
     return this.__connection
@@ -227,7 +227,7 @@ export default class KnexContext extends EventEmitter {
     // Before the first query runs, we need to ensure the
     // SQL statement for the BEGIN / SAVEPOINT is executed on
     // the context's connection.
-    knexTrx.hookOnce('beforeFirst', async () => {
+    knexTrx.hookOnce('beforeFirstQuery', async () => {
       const isInTransaction = this.isInTransaction()
 
       // If the driver needs custom transaction behavior (oracle, etc),
@@ -273,6 +273,17 @@ export default class KnexContext extends EventEmitter {
     return schemaInterface(this)
   }
 
+  escapeColumn() {
+    return this.client.formatter(this.raw()).columnize(...arguments)
+  }
+
+  escapeTable() {
+    return this.escapeColumn(...arguments);
+  }
+
+  escapeValue(value) {
+    return this.client._escapeBinding(value);
+  }
 }
 
 // Query Builder Methods

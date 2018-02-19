@@ -3,7 +3,12 @@
 'use strict';
 
 require('source-map-support').install();
-require('babel-register')
+
+var nodeMajorVersion = parseInt((process.versions.node || '').split('.')[0], 10);
+
+if(!nodeMajorVersion || nodeMajorVersion < 8) {
+  require('babel-register')
+}
 
 global.sinon = require("sinon");
 

@@ -61,21 +61,6 @@ function raw(sql, bindings) {
   return contexts.postgres.raw(sql, bindings);
 }
 
-function verifySqlResult(dialect, expectedObj, sqlObj) {
-  Object.keys(expectedObj).forEach(function (key) {
-    if (typeof expectedObj[key] === 'function') {
-      expectedObj[key](sqlObj[key]);
-    } else {
-      try {
-        expect(sqlObj[key]).to.deep.equal(expectedObj[key]);
-      } catch (e) {
-        e.stack = dialect + ': ' + e.stack
-        throw e
-      }
-    }
-  });
-}
-
 function testsql(chainFn, valuesToCheck, contextsMap = contexts) {
   for (const lang in valuesToCheck) {
     const value = valuesToCheck[lang]
@@ -129,7 +114,7 @@ function testquery(chainFn, valuesToCheck, asNull = false) {
     const value = valuesToCheck[lang]
     const evaluated = chainFn(asNull ? contextsWithNullAsDefault[lang] : contexts[lang])
     if (typeof value === 'string') {
-      expect(value).to.equal(evaluated + '')
+      expect(evaluated + '').to.equal(value)
     }
   }
 }
@@ -5420,5 +5405,41 @@ describe("QueryBuilder", function() {
     } catch(error) {
       expect(error.message).to.equal('Empty .update() call detected! Update data does not contain any values to update. This will result in a faulty query.');
     }
+  });
+
+  it('escapeColumn', () => {
+    testquery((knex) => knex.raw(`select ${knex.escapeColumn('sometable.column1')}, ${knex.escapeColumn('column2')}`), {
+      mssql: 'select [sometable].[column1], [column2]',
+      postgres: "select \"sometable\".\"column1\", \"column2\"",
+      mysql: 'select `sometable`.`column1`, `column2`',
+      sqlite3: 'select `sometable`.`column1`, `column2`',
+      redshift: 'select "sometable"."column1", "column2"',
+      oracledb: 'select "sometable"."column1", "column2"',
+      oracle: 'select "sometable"."column1", "column2"',
+    });
+  });
+
+  it('escapeTable', () => {
+    testquery((knex) => knex.raw(`select ${knex.escapeColumn('sometable.column1')}, ${knex.escapeColumn('column2')} from ${knex.escapeTable('sometable')}`), {
+      mssql: 'select [sometable].[column1], [column2] from [sometable]',
+      postgres: "select \"sometable\".\"column1\", \"column2\" from \"sometable\"",
+      mysql: 'select `sometable`.`column1`, `column2` from `sometable`',
+      sqlite3: 'select `sometable`.`column1`, `column2` from `sometable`',
+      redshift: 'select "sometable"."column1", "column2" from "sometable"',
+      oracledb: 'select "sometable"."column1", "column2" from "sometable"',
+      oracle: 'select "sometable"."column1", "column2" from "sometable"',
+    });
+  });
+
+  it('escapeValue/escapeBinding', () => {
+    testquery((knex) => knex.raw(`${knex.escapeValue('%')}`), {
+      mssql: '\'%\'',
+      postgres: '\'%\'',
+      mysql: '\'%\'',
+      sqlite3: '\'%\'',
+      redshift: '\'%\'',
+      oracledb: '\'%\'',
+      oracle: '\'%\'',
+    });
   });
 });
